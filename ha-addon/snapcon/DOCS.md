@@ -12,7 +12,8 @@ queue, notifications. This add-on runs it on your Home Assistant host.
 2. Add `https://github.com/jschallmayer78/SnapCon` and close the dialog.
 3. Find **SnapCon** in the store → **Install** (the first build takes a few
    minutes: the image is built on your Home Assistant host).
-4. **Start**, then **Open Web UI** — or open `http://<home-assistant-ip>:4545`.
+4. **Start**, switch on **Show in sidebar**, then open **SnapCon** in Home
+   Assistant's sidebar (or **Open Web UI**, or `http://<home-assistant-ip>:4545`).
 
 **As a local add-on** (to try a branch that is not on `main` yet)
 
@@ -20,6 +21,20 @@ queue, notifications. This add-on runs it on your Home Assistant host.
 2. Copy the folder `ha-addon/snapcon` to `/addons/snapcon` on Home Assistant
    (Samba share **addons**, or `scp -r` via the SSH add-on).
 3. Add-on Store → ⋮ → **Check for updates** → **Local add-ons** → SnapCon → Install.
+
+## Sidebar panel
+
+SnapCon opens as a panel in Home Assistant's sidebar (ingress): Home
+Assistant proxies it, so it works wherever Home Assistant itself works —
+also remotely through Home Assistant Cloud or your own HA URL, over HTTPS —
+and only for people logged in to Home Assistant. By default only HA
+administrators see the panel (`panel_admin` in the add-on's config.yaml).
+
+The direct address `http://<home-assistant-ip>:4545` keeps working in your
+LAN (for the slicer's device page, or a tablet without an HA login).
+
+If SnapCon's own **User Access Management** is on, the panel shows SnapCon's
+login once — the HA login does not sign you in to SnapCon.
 
 ## Using it
 
@@ -30,8 +45,9 @@ queue, notifications. This add-on runs it on your Home Assistant host.
 - **G-code folder**: `/share/snapcon/gcode`, reachable as
   `share/snapcon/gcode` over the Samba add-on — point your slicer's output
   there.
-- **Port**: 4545. Because of host networking the port is not changed in the
-  add-on's Network section but in SnapCon's Settings (then restart the add-on).
+- **Port**: 4545. Keep it — the sidebar panel reaches SnapCon on exactly this
+  port (because of host networking it is not set in the add-on's Network
+  section; changing it in SnapCon's Settings breaks the panel).
 - **Time zone**: taken from Home Assistant automatically.
 - **Camera snapshots** from Bambu Lab printers use ffmpeg, which is included.
 
@@ -44,10 +60,8 @@ survives updates and is part of Home Assistant backups. G-code files on
 
 ## Notes
 
-- The dashboard opens in its own tab (no sidebar/ingress panel): SnapCon's
-  pages use absolute paths that Home Assistant's ingress proxy would break.
 - **Restart App** in SnapCon's Settings stops the process; turn on the
   add-on's **Watchdog** switch so the Supervisor starts it again.
 - Updating: when installed from GitHub, the image contains SnapCon as it was
-  on `main` when it was built — use **Rebuild** in the add-on to pick up newer
-  commits.
+  on `main` when it was built. A new add-on version (e.g. `0.7.0.1`) shows up
+  as an update; **Rebuild** in the add-on picks up newer commits in between.

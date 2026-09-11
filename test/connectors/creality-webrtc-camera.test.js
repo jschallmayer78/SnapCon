@@ -178,7 +178,7 @@ test("/api/snapshot, getSnapshot and CAM_SHOT_CACHE are all still in place", () 
   assert.match(serverSrc, /app\.get\("\/api\/snapshot"/);
   assert.match(serverSrc, /async function getSnapshot\(|function getSnapshot\(/);
   assert.match(appSrc, /const CAM_SHOT_CACHE = new Map\(\)/);
-  assert.match(appSrc, /img\.src="\/api\/snapshot\?printer="/); // the JPEG tile path survives
+  assert.match(appSrc, /img\.src="api\/snapshot\?printer="/); // the JPEG tile path survives
 });
 
 test("notification images still degrade to text-only, with no WebRTC involvement", () => {

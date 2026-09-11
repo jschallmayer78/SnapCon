@@ -215,10 +215,11 @@ test("HA add-on: a valid repository layout with the add-on in ha-addon/snapcon",
   for (const k of ["name", "version", "slug", "description", "arch"]) assert.match(cfg, new RegExp("^" + k + ":", "m"), k);
   assert.match(cfg, /^slug: snapcon$/m);
   assert.match(cfg, /^version: "([^"]+)"$/m);
-  assert.equal(/^version: "([^"]+)"$/m.exec(cfg)[1], require(path.join(ROOT, "package.json")).version, "add-on version follows package.json");
+  const addonVersion = /^version: "([^"]+)"$/m.exec(cfg)[1], appVersion = require(path.join(ROOT, "package.json")).version;
+  assert.ok(addonVersion === appVersion || new RegExp("^" + appVersion.replace(/\./g, "\\.") + "\\.\\d+$").test(addonVersion),
+    "add-on version is SnapCon's version, optionally with an add-on revision (" + addonVersion + " vs " + appVersion + ")");
   assert.match(cfg, /^host_network: true$/m, "LAN discovery and direct printer access");
   assert.match(cfg, /^webui: http:\/\/\[HOST\]:\[PORT:4545\]$/m);
-  assert.doesNotMatch(cfg, /^ingress:/m, "the dashboard uses absolute /api paths, which ingress would break");
   assert.match(cfg, /- type: share\s*\n\s*read_only: false/);
 });
 

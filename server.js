@@ -396,7 +396,8 @@ app.use(express.json({ limit: "1mb" }));
 // --snapcon push sends to /api/notify-load — express.json() above ignores
 // non-JSON bodies and leaves the stream untouched, so layering this is safe.
 const rawGcodeBody = express.raw({ type: "application/octet-stream", limit: "2gb" });
-app.use(express.static(path.join(ASSET_DIR, "public")));
+// index: false — "/" must reach the route below, which adds <base href>.
+app.use(express.static(path.join(ASSET_DIR, "public"), { index: false }));
 // Annotates req.user on every /api request; when usersEnabled is false this
 // always resolves to an implicit admin, so every route below behaves exactly
 // as it does today. Individual routes layer requireAuth/requireRegular/
@@ -433,25 +434,34 @@ function actorFromReq(req) {
   return { userId: u.id, userLabel: name || u.loginName };
 }
 
+// Home Assistant's sidebar panel (ingress) proxies SnapCon under
+// /api/hassio_ingress/<token>/ and names that prefix in X-Ingress-Path. The
+// page's <base href> carries it, so every (relative) URL in the client
+// resolves below it; served directly the base is "/" — the same URLs as
+// before, also on the /orca/... and /health/... pages. Only a well-formed
+// prefix is used: the value ends up in HTML.
+const INGRESS_PATH_RE = /^\/api\/hassio_ingress\/[A-Za-z0-9_-]{1,128}$/;
+function pageBasePath(req) {
+  const p = req.get("X-Ingress-Path");
+  return p && INGRESS_PATH_RE.test(p) ? p + "/" : "/";
+}
 // Explicit index route so the UI is served even when running from a packaged
 // binary (where express.static from the snapshot can be unreliable).
-app.get("/", (req, res) => {
-  try { res.type("html").send(fs.readFileSync(path.join(ASSET_DIR, "public", "index.html"), "utf8")); }
-  catch (e) { res.status(500).send("index.html not found"); }
-});
+function sendIndex(req, res) {
+  let html;
+  try { html = fs.readFileSync(path.join(ASSET_DIR, "public", "index.html"), "utf8"); }
+  catch (e) { return res.status(500).send("index.html not found"); }
+  res.set("Cache-Control", "no-cache");
+  res.type("html").send(html.replace(/<head>/i, () => '<head>\n<base href="' + pageBasePath(req) + '">'));
+}
+app.get("/", sendIndex);
 // /orca/<printer name> (case-insensitive, "_" = space) — same page; the client
 // reads the path and filters the fleet down to just that one printer's card.
-app.get(/^\/orca\/.+$/i, (req, res) => {
-  try { res.type("html").send(fs.readFileSync(path.join(ASSET_DIR, "public", "index.html"), "utf8")); }
-  catch (e) { res.status(500).send("index.html not found"); }
-});
+app.get(/^\/orca\/.+$/i, sendIndex);
 // /health or /health/<printer id> — same page; the client reads the path on
 // load and via pushState as the printer picker changes (the Health page's
 // own router, not a general SPA catch-all — every other path still 404s).
-app.get(/^\/health(\/.*)?$/i, (req, res) => {
-  try { res.type("html").send(fs.readFileSync(path.join(ASSET_DIR, "public", "index.html"), "utf8")); }
-  catch (e) { res.status(500).send("index.html not found"); }
-});
+app.get(/^\/health(\/.*)?$/i, sendIndex);
 
 // fetchTimeout/fetchJSONTimeout/baseUrl/pickIface are generic HTTP helpers
 // (not printer-protocol-specific) shared with connectors/ — see

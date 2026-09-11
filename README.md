@@ -501,8 +501,11 @@ Access identity, and the default `gcode/` folder) into one directory — handy f
 
 **Home Assistant add-on** — see [`ha-addon/snapcon/DOCS.md`](ha-addon/snapcon/DOCS.md). In short: Settings →
 Add-ons → Add-on Store → ⋮ → Repositories → add `https://github.com/jschallmayer78/SnapCon`, then install
-**SnapCon**. State is kept in the add-on's `/data` (included in Home Assistant backups), the G-code folder
-is `/share/snapcon/gcode`.
+**SnapCon** and switch on *Show in sidebar*: SnapCon then opens as a Home Assistant sidebar panel (ingress,
+also remotely through your HA URL), while `http://<ha-ip>:4545` keeps working in the LAN. State is kept in
+the add-on's `/data` (included in Home Assistant backups), the G-code folder is `/share/snapcon/gcode`.
+Because of the sidebar panel every URL in the frontend is relative (`api/…`, not `/api/…`); the server
+writes the page's `<base href>` from ingress' `X-Ingress-Path` header (`/` when opened directly).
 
 ---
 

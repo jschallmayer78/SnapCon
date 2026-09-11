@@ -13,6 +13,14 @@ function lookupKlipperError(code, msg){
 }
 const $ = id => document.getElementById(id);
 const VERSION = "0.7.0";
+// SnapCon can be served below a path prefix: Home Assistant's sidebar panel
+// (ingress) shows it under /api/hassio_ingress/<token>/, and the server
+// writes that prefix into the page's <base href>. So every URL the client
+// requests is relative (api/..., icons, style.css), and the page's own
+// routes (/orca/..., /health/...) are read and written through appPath() /
+// BASE_PATH. Served directly, BASE_PATH is "" and nothing changes.
+const BASE_PATH = (() => { try { return new URL(document.baseURI).pathname.replace(/\/+$/, ""); } catch { return ""; } })();
+function appPath(){ const p=location.pathname; return BASE_PATH && p.startsWith(BASE_PATH+"/") ? p.slice(BASE_PATH.length) : p; }
 // A session that expired mid-use (idle timeout, or an Admin deleted the
 // account) shows the login overlay again on the next call rather than
 // leaving the UI silently broken.
@@ -75,7 +83,7 @@ let RA_POLL_TIMER = null, RA_INFLIGHT = false;
 // hardcoded list duplicated in this file.
 let CONNECTOR_TYPES = [];
 async function loadConnectorTypes(){
-  try{ CONNECTOR_TYPES=await getJSON("/api/connectors"); }catch{ CONNECTOR_TYPES=[]; }
+  try{ CONNECTOR_TYPES=await getJSON("api/connectors"); }catch{ CONNECTOR_TYPES=[]; }
 }
 function connectorCaps(type){
   return (CONNECTOR_TYPES.find(c=>c.type===type)||{}).capabilities||{};
@@ -109,7 +117,7 @@ function canAct(){ return !USERS_ENABLED || (CURRENT_USER && (CURRENT_USER.role=
 let GROUPS = [];
 const GROUP_EVERYONE_ID = "grp_everyone";
 async function loadGroupsUI(){
-  try{ GROUPS = await getJSON("/api/groups"); }
+  try{ GROUPS = await getJSON("api/groups"); }
   catch{ GROUPS = []; }
   // Every already-rendered Printers-tab row baked its Access checklist into
   // static HTML at row-creation time — it has no way to notice the group
@@ -138,14 +146,14 @@ let PRINTER_POOLS = [];
 let QUEUE_STORE_STATUS = { storeDegraded: false, storeStoppedByAdmin: false, queueStoreRecoveryRequired: false };
 async function loadQueueManagementUI(){
   try{
-    const status = await getJSON("/api/queue-management/status");
+    const status = await getJSON("api/queue-management/status");
     QUEUE_MANAGEMENT_ENABLED = !!status.enabled;
     QUEUE_STORE_STATUS = status.store || QUEUE_STORE_STATUS;
     $("setQueueEnabled").checked = QUEUE_MANAGEMENT_ENABLED;
     $("queueModeRow").style.display = QUEUE_MANAGEMENT_ENABLED ? "" : "none";
     $("printerPoolsCard").style.display = QUEUE_MANAGEMENT_ENABLED ? "" : "none";
   }catch{ QUEUE_MANAGEMENT_ENABLED = false; }
-  try{ PRINTER_POOLS = await getJSON("/api/printer-pools"); }
+  try{ PRINTER_POOLS = await getJSON("api/printer-pools"); }
   catch{ PRINTER_POOLS = []; }
   // Printer -> pool assignments can change server-side without this
   // client's PRINTERS_CFG snapshot knowing — a bulk auto-assign to Default
@@ -155,7 +163,7 @@ async function loadQueueManagementUI(){
   // of bug already fixed once for the Access-groups checklist).
   if(QUEUE_MANAGEMENT_ENABLED && isAdmin()){
     try{
-      const cfg = await getJSON("/api/config");
+      const cfg = await getJSON("api/config");
       (cfg.printers||[]).forEach(p=>{
         const entry=PRINTERS_CFG.find(x=>x.id===p.id);
         if(entry) entry.printerPoolId=p.printerPoolId;
@@ -229,7 +237,7 @@ function renderQueueStoreWarning(){
       const st=$("queueAckResetStatus");
       st.className="pstatus work"; st.textContent=t("queue.resetting");
       try{
-        const r=checkAuthFailure(await postJSON("/api/queue-store/acknowledge-reset",{confirm:$("queueResetConfirm").value}));
+        const r=checkAuthFailure(await postJSON("api/queue-store/acknowledge-reset",{confirm:$("queueResetConfirm").value}));
         const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status)));
         await loadQueueManagementUI();
       }catch(e){ st.className="pstatus err"; st.textContent=e.message; }
@@ -245,9 +253,9 @@ function renderQueueStoreWarning(){
     (s.storeStoppedByAdmin?`<button class="btn ghost" id="queueResumeAllBtn">${t("queue.resume_all_queues_button")}</button>`:`<button class="btn ghost" id="queueStopAllBtn">${t("queue.stop_all_queues_button")}</button>`)+
     `<span class="pstatus" id="queueStoreActionStatus"></span>`+
     `</div>`;
-  if($("queueRetrySaveBtn")) $("queueRetrySaveBtn").addEventListener("click",()=>queueStoreAction("/api/queue-store/retry-save"));
-  if($("queueResumeAllBtn")) $("queueResumeAllBtn").addEventListener("click",()=>queueStoreAction("/api/queue-store/resume-all"));
-  if($("queueStopAllBtn")) $("queueStopAllBtn").addEventListener("click",()=>queueStoreAction("/api/queue-store/stop-all"));
+  if($("queueRetrySaveBtn")) $("queueRetrySaveBtn").addEventListener("click",()=>queueStoreAction("api/queue-store/retry-save"));
+  if($("queueResumeAllBtn")) $("queueResumeAllBtn").addEventListener("click",()=>queueStoreAction("api/queue-store/resume-all"));
+  if($("queueStopAllBtn")) $("queueStopAllBtn").addEventListener("click",()=>queueStoreAction("api/queue-store/stop-all"));
 }
 async function queueStoreAction(url){
   const st=$("queueStoreActionStatus");
@@ -279,7 +287,7 @@ function renderPrinterPoolsList(){
       const name=inp.value.trim();
       if(!name||name===orig){ inp.value=name||orig; return; }
       try{
-        const r=checkAuthFailure(await fetch("/api/printer-pools/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})}));
+        const r=checkAuthFailure(await fetch("api/printer-pools/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})}));
         const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status)));
         await loadQueueManagementUI();
       }catch(e){ alert(e.message); inp.value=orig; }
@@ -291,7 +299,7 @@ function renderPrinterPoolsList(){
       const p=PRINTER_POOLS.find(x=>x.id===id);
       if(!confirm(t("queue.delete_pool_confirm",{name:p?p.name:""}))) return;
       try{
-        const r=checkAuthFailure(await fetch("/api/printer-pools/"+id,{method:"DELETE"}));
+        const r=checkAuthFailure(await fetch("api/printer-pools/"+id,{method:"DELETE"}));
         const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status)));
         await loadQueueManagementUI();
       }catch(e){ alert(e.message); }
@@ -303,7 +311,7 @@ function renderPrinterPoolsList(){
 // only that printer's fleet card. Read once at load; the path doesn't change
 // within a session.
 const URL_PRINTER_FILTER = (() => {
-  const m = location.pathname.match(/^\/orca\/(.+)$/i);
+  const m = appPath().match(/^\/orca\/(.+)$/i);
   return m ? decodeURIComponent(m[1]).replace(/_/g, ' ').trim().toLowerCase() : null;
 })();
 
@@ -604,7 +612,7 @@ async function openCamRtc(id, url, video){
 function camShotPlaceholderEl(text, onRetry){
   const div=document.createElement("div");
   div.className="cam-shot-placeholder"+(onRetry?" cam-shot-retryable":"");
-  div.innerHTML=`<img class="cam-shot-placeholder-icon" src="/camera-disabled.svg" alt=""><span>${esc(text)}</span>`;
+  div.innerHTML=`<img class="cam-shot-placeholder-icon" src="camera-disabled.svg" alt=""><span>${esc(text)}</span>`;
   if(onRetry){ div.title=t("fleet.camera.retry_title"); div.addEventListener("click", onRetry); }
   return div;
 }
@@ -689,7 +697,7 @@ function startCamShotRefresh(id, refreshMs){
     const entry=CAM_SHOT_CACHE.get(id);
     if(entry){ entry.refreshing=false; entry.nextDueAt=Date.now()+refreshMs; } // blip — keep the old frame, retry next interval
   };
-  next.src="/api/snapshot?printer="+id+"&t="+Date.now();
+  next.src="api/snapshot?printer="+id+"&t="+Date.now();
 }
 // stagger: at real fleet sizes (tens of printers), every camera-capable
 // printer gets mounted in the same renderFleet() pass, so without this
@@ -721,7 +729,7 @@ function mountCamShot(slot, id, refreshMs, stagger){
     if(camShotIsBlack(img)) camShotFailed(id);
   };
   img.onerror=()=>camShotFailed(id);
-  img.src="/api/snapshot?printer="+id+"&t="+now;
+  img.src="api/snapshot?printer="+id+"&t="+now;
   slot.replaceWith(img);
 }
 // The WebRTC counterpart of mountCamShot: same slot contract (replace the
@@ -780,7 +788,7 @@ function observeCamRtc(video,id,url){
 //
 // Some printers stream H.264 over RTSP, which no browser can open (Bambu Lab
 // H2: RTSPS on port 322). SnapCon's server holds the one RTSP session and
-// re-wraps the video as fragmented MP4 (/api/camera-stream); the page plays
+// re-wraps the video as fragmented MP4 (api/camera-stream); the page plays
 // that byte stream through Media Source Extensions. MSE, not WebCodecs:
 // SnapCon is usually opened as plain http://<lan-ip>, which is not a secure
 // context, and WebCodecs only exists in secure contexts. The browser does all
@@ -839,7 +847,7 @@ async function openCamStream(key, printerId, video){
   CAM_STREAM.set(key, entry);
   const fail=(err)=>{ if(entry.state!=="closed"&&!entry.failure){ entry.failure=err||new Error(t("fleet.camera.no_feed")); try{ entry.abort.abort(); }catch{} } };
   try{
-    const r=await fetch("/api/camera-stream?printer="+printerId,{signal:entry.abort.signal, cache:"no-store"});
+    const r=await fetch("api/camera-stream?printer="+printerId,{signal:entry.abort.signal, cache:"no-store"});
     checkAuthFailure(r);
     if(!r.ok){ let msg=""; try{ msg=(await r.json()).error||""; }catch{} throw new Error(msg||("HTTP "+r.status)); }
     const codec=r.headers.get("X-SnapCon-Codec")||"avc1.640028";
@@ -1084,7 +1092,7 @@ let VIEW_MODE = 'regular'; // 'regular' | 'compact' | 'camera' | 'list' | 'print
 // button a plain two-way toggle between Regular and that one view only.
 let ALT_DISPLAY = 'all'; // 'all' | 'compact' | 'camera' | 'list' | 'printfarm'
 const ALL_CYCLE = { regular:'compact', compact:'camera', camera:'list', list:'printfarm', printfarm:'regular' };
-const VIEW_ICON  = { regular:'/view-regular.svg', compact:'/view-compact.svg', camera:'/view-camera.svg', list:'/view-list.svg', printfarm:'/view-printfarm.svg' };
+const VIEW_ICON  = { regular:'view-regular.svg', compact:'view-compact.svg', camera:'view-camera.svg', list:'view-list.svg', printfarm:'view-printfarm.svg' };
 const VIEW_TITLE_KEYS = { regular:'global.topbar.view_title_regular', compact:'global.topbar.view_title_compact', camera:'global.topbar.view_title_camera', list:'global.topbar.view_title_list', printfarm:'global.topbar.view_title_printfarm' };
 // Extracted from applyViewMode() so the printfarm path (which bypasses the
 // body-class logic below — see cycleViewMode()) can still keep the header
@@ -1232,7 +1240,7 @@ async function populatePreAuthLocaleSelector(){
   const sel=$("loginLocale");
   if(!sel) return;
   let list=[];
-  try{ const d=await getJSON("/api/public-locales"); list=d.locales||[]; }catch{ sel.style.display="none"; return; }
+  try{ const d=await getJSON("api/public-locales"); list=d.locales||[]; }catch{ sel.style.display="none"; return; }
   if(!list.length) { sel.style.display="none"; return; }
   sel.innerHTML=list.map(l=>`<option value="${esc(l.locale)}">${esc(l.nativeName||l.language||l.locale)}</option>`).join("");
   sel.value=i18nCurrentLocale();
@@ -1271,7 +1279,7 @@ async function doLoginPassword(){
   const btn=$("loginSubmit"); btn.disabled=true;
   st.className="pstatus work"; st.textContent=t("auth.status_logging_in");
   try{
-    const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({loginName,password})});
+    const r=await fetch("api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({loginName,password})});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(authErrorText(d,d.error||("HTTP "+r.status)));
     onLoginSuccess(d.user);
@@ -1285,7 +1293,7 @@ async function doRequestOtp(){
   const btn=$("loginOtpBtn"); btn.disabled=true;
   st.className="pstatus work"; st.textContent=t("auth.status_sending_code");
   try{
-    const r=await fetch("/api/login/otp/request",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({loginName})});
+    const r=await fetch("api/login/otp/request",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({loginName})});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(authErrorText(d,d.error||("HTTP "+r.status)));
     OTP_LOGIN_NAME=loginName;
@@ -1304,7 +1312,7 @@ async function doVerifyOtp(){
   const btn=$("otpSubmit"); btn.disabled=true;
   st.className="pstatus work"; st.textContent=t("auth.status_verifying");
   try{
-    const r=await fetch("/api/login/otp/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({loginName:OTP_LOGIN_NAME,code})});
+    const r=await fetch("api/login/otp/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({loginName:OTP_LOGIN_NAME,code})});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(authErrorText(d,d.error||("HTTP "+r.status)));
     onLoginSuccess(d.user);
@@ -1320,7 +1328,7 @@ function wireLoginOverlay(){
   $("otpCode").addEventListener("keydown", e=>{ if(e.key==="Enter") doVerifyOtp(); });
   $("otpBack").addEventListener("click", ()=>{ $("loginStep2").style.display="none"; $("loginStep1").style.display=""; $("otpStatus").textContent=""; });
   $("logoutBtn").addEventListener("click", async ()=>{
-    try{ await fetch("/api/logout",{method:"POST"}); }catch{}
+    try{ await fetch("api/logout",{method:"POST"}); }catch{}
     CURRENT_USER=null;
     applyRoleUI();
     showLoginOverlay();
@@ -1342,7 +1350,7 @@ async function authGate(){
   // still requires login, with every subsequent call silently 401ing.
   for(let attempt=0; attempt<2; attempt++){
     try{
-      const s=await fetch("/api/session").then(r=>r.json());
+      const s=await fetch("api/session").then(r=>r.json());
       USERS_ENABLED=!!s.usersEnabled;
       SYSTEM_DEFAULT_LOCALE=s.locale||"en";
       if(USERS_ENABLED && s.authenticated){ CURRENT_USER=s.user; applyAccountTheme(CURRENT_USER); }
@@ -1475,7 +1483,7 @@ async function init(){
   // populated (auto-select-first-attention needs it). Live navigation after
   // this point goes through selectHealthPrinter()/the popstate listener,
   // not this check again.
-  const healthMatch=location.pathname.match(/^\/health\/?(\d*)$/i);
+  const healthMatch=appPath().match(/^\/health\/?(\d*)$/i);
   if(healthMatch) openHealthPage(healthMatch[1]?parseInt(healthMatch[1],10):null);
   // First fleet data is in (or failed) — fade the splash out and drop it.
   const splash=$("splash");
@@ -1504,7 +1512,7 @@ function wireModal(modalId, closeFn, buttonIds){
 // after a click.
 function syncThemeButton(){
   const light=document.documentElement.getAttribute("data-theme")==="light";
-  $("themeBtnIcon").src=light?"/moon.svg":"/sun.svg";
+  $("themeBtnIcon").src=light?"moon.svg":"sun.svg";
   $("themeBtnIcon").alt=t(light?"global.topbar.theme_alt_dark":"global.topbar.theme_alt_light");
   $("themeBtn").title=t(light?"global.topbar.theme_title_to_dark":"global.topbar.theme_title_to_light");
   $("themeBtn").setAttribute("aria-pressed",light?"true":"false");
@@ -1787,7 +1795,7 @@ async function applyAccountLocale(user){
 // re-render.
 async function populateLocaleSelectors(){
   let list=[];
-  try{ const d=await getJSON("/api/locales"); list=d.locales||[]; }catch{}
+  try{ const d=await getJSON("api/locales"); list=d.locales||[]; }catch{}
   const optsHtml=list.map(l=>`<option value="${esc(l.locale)}">${esc(l.nativeName||l.language||l.locale)}</option>`).join("");
   if($("setLocale")){ $("setLocale").innerHTML=optsHtml; $("setLocale").value=SYSTEM_DEFAULT_LOCALE; }
   const sysEntry=list.find(l=>l.locale===SYSTEM_DEFAULT_LOCALE);
@@ -1805,7 +1813,7 @@ async function populateLocaleSelectors(){
 async function saveUserLocalePreference(value){
   if(!(USERS_ENABLED&&CURRENT_USER)) return;
   try{
-    await postJSON("/api/session/locale",{locale:value||null});
+    await postJSON("api/session/locale",{locale:value||null});
     CURRENT_USER.locale=value||null;
   }catch{}
 }
@@ -1885,7 +1893,7 @@ function closeLanguageEditor(){
 }
 async function loadLangEditorList(){
   try{
-    const d=await getJSON("/api/locales");
+    const d=await getJSON("api/locales");
     LANG_ED_LIST=d.locales||[];
   }catch{ LANG_ED_LIST=[]; }
   renderLangChips();
@@ -1909,7 +1917,7 @@ function renderLangChips(){
 }
 async function selectLangEditorLocale(locale){
   try{
-    const d=await getJSON("/api/locales/"+encodeURIComponent(locale));
+    const d=await getJSON("api/locales/"+encodeURIComponent(locale));
     if(locale==="en"){ LANG_ED_EN_FLAT=i18nFlatten(d.data); }
     LANG_ED_CURRENT=locale;
     LANG_ED_DATA=d.data;
@@ -1918,7 +1926,7 @@ async function selectLangEditorLocale(locale){
     if(!LANG_ED_EN_FLAT||!Object.keys(LANG_ED_EN_FLAT).length){
       // English hasn't been loaded into this editor session yet (first
       // thing selected was a non-English chip) — fetch it once, silently.
-      try{ const enD=await getJSON("/api/locales/en"); LANG_ED_EN_FLAT=i18nFlatten(enD.data); }catch{}
+      try{ const enD=await getJSON("api/locales/en"); LANG_ED_EN_FLAT=i18nFlatten(enD.data); }catch{}
     }
   }catch(e){
     LANG_ED_CURRENT=locale; LANG_ED_DATA=null; LANG_ED_FINGERPRINT=null;
@@ -2069,7 +2077,7 @@ async function saveLangEditor(){
     LANG_ED_SAVE_ANYWAY=true;
   }
   try{
-    const r=await postJSON("/api/locales/"+encodeURIComponent(LANG_ED_CURRENT),{data:LANG_ED_DATA,expectedFingerprint:LANG_ED_FINGERPRINT});
+    const r=await postJSON("api/locales/"+encodeURIComponent(LANG_ED_CURRENT),{data:LANG_ED_DATA,expectedFingerprint:LANG_ED_FINGERPRINT});
     if(r.status===409){
       $("langConflictWarning").style.display="";
       $("langConflictWarning").textContent=t("settings.language_editor.conflict_message");
@@ -2091,7 +2099,7 @@ async function createLangEditorLanguage(){
   const st=$("langNewStatus");
   st.className="pstatus work"; st.textContent="…";
   try{
-    const r=await (await postJSON("/api/locales",{locale,language,nativeName})).json();
+    const r=await (await postJSON("api/locales",{locale,language,nativeName})).json();
     if(r.error) throw new Error(r.error);
     st.className="pstatus ok"; st.textContent="";
     $("langNewForm").style.display="none";
@@ -2114,7 +2122,7 @@ async function handleLangImportFile(){
     const parsed=JSON.parse(text);
     const locale=parsed&&parsed._meta&&parsed._meta.locale;
     if(!locale) throw new Error(t("settings.language_editor.import_error_no_locale"));
-    const preview=await (await postJSON("/api/locales/"+encodeURIComponent(locale)+"/import-preview",{data:parsed})).json();
+    const preview=await (await postJSON("api/locales/"+encodeURIComponent(locale)+"/import-preview",{data:parsed})).json();
     if(preview.error) throw new Error(preview.error);
     LANG_IMPORT_PARSED={locale,data:parsed};
     $("langImportPreview").textContent=
@@ -2131,7 +2139,7 @@ async function commitLangImport(){
   const st=$("langImportStatus");
   try{
     const importedLocale=LANG_IMPORT_PARSED.locale;
-    const r=await (await postJSON("/api/locales/"+encodeURIComponent(importedLocale)+"/import",{data:LANG_IMPORT_PARSED.data})).json();
+    const r=await (await postJSON("api/locales/"+encodeURIComponent(importedLocale)+"/import",{data:LANG_IMPORT_PARSED.data})).json();
     if(r.error) throw new Error(r.error);
     $("langImportForm").style.display="none";
     $("langImportFile").value=""; $("langImportPreview").textContent=""; LANG_IMPORT_PARSED=null;
@@ -2207,7 +2215,7 @@ function wireUI(){
     // won't pick it up yet.
     if(USERS_ENABLED && CURRENT_USER){
       CURRENT_USER.theme=next;
-      fetch("/api/session/theme",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({theme:next})}).catch(()=>{});
+      fetch("api/session/theme",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({theme:next})}).catch(()=>{});
     }
   });
   syncThemeButton();
@@ -2251,7 +2259,7 @@ function wireUI(){
   if($("editLanguagesBtn")) $("editLanguagesBtn").addEventListener("click", openLanguageEditor);
   wireModal("langEditorModal", closeLanguageEditor, ["langEditorX","langEditorCancel"]);
   $("langEditorSave").addEventListener("click", saveLangEditor);
-  $("langRefreshBtn").addEventListener("click", async ()=>{ await postJSON("/api/locales/refresh",{}); await loadLangEditorList(); });
+  $("langRefreshBtn").addEventListener("click", async ()=>{ await postJSON("api/locales/refresh",{}); await loadLangEditorList(); });
   $("langExportBtn").addEventListener("click", exportLangEditorLocale);
   $("langSearch").addEventListener("input", renderLangKeyList);
   $("langUntranslatedOnly").addEventListener("change", renderLangKeyList);
@@ -2288,7 +2296,7 @@ function wireUI(){
     if(!name){ st.className="pstatus err"; st.textContent=t("settings.users.enter_a_name"); return; }
     st.className="pstatus work"; st.textContent=t("settings.users.adding_group");
     try{
-      const r=await fetch("/api/groups",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+      const r=await fetch("api/groups",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
       const d=await r.json(); if(!r.ok||d.error) throw new Error(userErrorText(d,d.error||("HTTP "+r.status)));
       const kept=checkedGroupIds();
       await loadGroupsUI();
@@ -2523,7 +2531,7 @@ function wireUI(){
     if(!days||days<1){ st.className="pstatus err"; st.textContent=t("settings.logs.retention_invalid"); return; }
     st.className="pstatus work"; st.textContent=t("settings.dirty_bar.saving");
     try{
-      const r=checkAuthFailure(await postJSON("/api/config",{auditRetentionDays:days}));
+      const r=checkAuthFailure(await postJSON("api/config",{auditRetentionDays:days}));
       const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
       st.className="pstatus ok"; st.textContent=t("settings.dirty_bar.saved");
     }catch(e){ st.className="pstatus err"; st.textContent=e.message; }
@@ -2532,7 +2540,7 @@ function wireUI(){
   $("setQueueEnabled").addEventListener("change", async function(){
     const wantOn=this.checked;
     try{
-      await postJSON(wantOn?"/api/queue-management/enable":"/api/queue-management/disable",{});
+      await postJSON(wantOn?"api/queue-management/enable":"api/queue-management/disable",{});
       await loadQueueManagementUI();
     }catch(e){ this.checked=!wantOn; alert(e.message); }
   });
@@ -2542,7 +2550,7 @@ function wireUI(){
     if(!name){ st.className="pstatus err"; st.textContent=t("settings.users.enter_a_name"); return; }
     st.className="pstatus work"; st.textContent=t("settings.users.adding_group");
     try{
-      const r=checkAuthFailure(await postJSON("/api/printer-pools",{name}));
+      const r=checkAuthFailure(await postJSON("api/printer-pools",{name}));
       const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
       $("newPrinterPoolName").value="";
       st.className="pstatus ok"; st.textContent=t("settings.users.group_added");
@@ -2613,7 +2621,7 @@ function renderVbadge(){
 async function checkVersion(){
   const b=$("vbadge");
   try{
-    const sv=(await getJSON("/api/version")).version;
+    const sv=(await getJSON("api/version")).version;
     if(sv===VERSION){ b.className="vbadge"; VBADGE_BASE="v"+VERSION; }
     else { b.className="vbadge bad"; VBADGE_BASE="page v"+VERSION+" ≠ server v"+sv+" — restart server.js"; }
   }catch(e){
@@ -2635,7 +2643,7 @@ $("filter").addEventListener("input", ()=>{
 });
 async function runSearch(q){
   try{
-    const d=await getJSON("/api/files/search?q="+encodeURIComponent(q));
+    const d=await getJSON("api/files/search?q="+encodeURIComponent(q));
     // The box may have changed (or been cleared) while this was in flight.
     if($("filter").value.trim()!==q) return;
     SEARCH_RESULTS=d.files||[];
@@ -2649,7 +2657,7 @@ async function loadFiles(sub){
   // move/mkdir refresh) clears checked files — the periodic no-arg refresh
   // (timer, Refresh button) must not wipe an in-progress multi-select.
   if(sub!==undefined){ CURRENT_SUB=sub; SELECTED_FILES.clear(); SELECT_ANCHOR=null; updateMultiSelectUI(); }
-  try{ const d = await getJSON("/api/files?sub="+encodeURIComponent(CURRENT_SUB));
+  try{ const d = await getJSON("api/files?sub="+encodeURIComponent(CURRENT_SUB));
     if(d.error){ $("folderline").textContent=d.error; FILES=[]; FOLDERS=[]; renderList(); return; }
     $("folderline").textContent=d.folder; FILES=d.files; FOLDERS=d.folders||[]; renderList();
   }catch(e){ $("folderline").textContent=t("files.server_unreachable"); }
@@ -2850,7 +2858,7 @@ function renderList(){
     b.className="job"+(SELECTED===filePath?" active":"")+(SELECTED_FILES.has(filePath)?" multi-selected":"");
     b.draggable=true; b.dataset.file=filePath;
     b.tabIndex=0; b.setAttribute("role","button");
-    const fsBadge=(SELECTED===filePath&&MAP&&MAP.isFS)?` <img src="/fs-badge.svg" class="fs-badge" title="${esc(t("files.full_spectrum_title"))}">`:``;
+    const fsBadge=(SELECTED===filePath&&MAP&&MAP.isFS)?` <img src="fs-badge.svg" class="fs-badge" title="${esc(t("files.full_spectrum_title"))}">`:``;
     b.innerHTML=`<div class="jn">${esc(stripExt(f.name))}${fsBadge}</div>`+
       `<div class="jm">${fmtTime(f.mtime)} · ${fmtSize(f.size)}</div>`;
     b.addEventListener("click",e=>fileRowClick(e,filePath,shownPaths));
@@ -2869,7 +2877,7 @@ function renderSearchResults(){
   shown.forEach(f=>{
     const filePath=f.sub?f.sub+"/"+f.name:f.name;
     const b=document.createElement("button"); b.className="job"+(SELECTED===filePath?" active":"");
-    const fsBadge=(SELECTED===filePath&&MAP&&MAP.isFS)?` <img src="/fs-badge.svg" class="fs-badge" title="${esc(t("files.full_spectrum_title"))}">`:``;
+    const fsBadge=(SELECTED===filePath&&MAP&&MAP.isFS)?` <img src="fs-badge.svg" class="fs-badge" title="${esc(t("files.full_spectrum_title"))}">`:``;
     const where=f.sub?`<span class="jm-path">${esc(f.sub)}/</span>`:``;
     b.innerHTML=`<div class="jn">${where}${esc(stripExt(f.name))}${fsBadge}</div><div class="jm">${fmtTime(f.mtime)} · ${fmtSize(f.size)}</div>`;
     b.addEventListener("click",()=>selectFile(filePath));
@@ -2997,7 +3005,7 @@ async function doSendQueue(startImmediately){
   const mode=modeInput?modeInput.value:"print-on-all";
   st.className="pstatus work"; st.textContent=t("queue.sending");
   try{
-    const r=checkAuthFailure(await postJSON("/api/queue/send",{
+    const r=checkAuthFailure(await postJSON("api/queue/send",{
       files: SEND_QUEUE_ITEMS.map(it=>({name:it.name, sub:it.sub, quantity:it.quantity})),
       poolId, mode, startImmediately
     }));
@@ -3162,20 +3170,20 @@ function closeHealthPage(){
   $("healthBtn").title=t("global.topbar.health_title");
   HEALTH_PRINTER_ID=null; HEALTH_DATA=null; HEALTH_MAINT=null;
   stopHealthAutoRefresh();
-  if(!HEALTH_SYNCING_FROM_POPSTATE && location.pathname.toLowerCase().startsWith("/health")) history.pushState(null,"","/");
+  if(!HEALTH_SYNCING_FROM_POPSTATE && appPath().toLowerCase().startsWith("/health")) history.pushState(null,"",BASE_PATH+"/");
   applyRoleUI();
 }
 function selectHealthPrinter(id){
   HEALTH_PRINTER_ID=id;
   if(!HEALTH_SYNCING_FROM_POPSTATE && id!=null){
     const target="/health/"+id;
-    if(location.pathname!==target) history.pushState(null,"",target);
+    if(appPath()!==target) history.pushState(null,"",BASE_PATH+target);
   }
   renderHealthPicker();
   loadHealthData();
 }
 window.addEventListener("popstate",()=>{
-  const m=/^\/health\/?(\d*)$/i.exec(location.pathname);
+  const m=/^\/health\/?(\d*)$/i.exec(appPath());
   HEALTH_SYNCING_FROM_POPSTATE=true;
   try{
     if(!m){ if($("healthPage").classList.contains("show")) closeHealthPage(); return; }
@@ -3228,9 +3236,9 @@ async function loadHealthData(opts){
   const token=++HEALTH_REQ_TOKEN;
   if(!quiet){ HEALTH_DATA=null; HEALTH_MAINT=null; renderHealthBody(); }
   let health, maint;
-  try{ health=await (await fetch("/api/health?printer="+pid)).json(); }
+  try{ health=await (await fetch("api/health?printer="+pid)).json(); }
   catch(e){ health={ skipped:true, reason:t("health.could_not_reach",{message:e.message}) }; }
-  try{ maint=await (await fetch("/api/maintenance?printer="+pid)).json(); }
+  try{ maint=await (await fetch("api/maintenance?printer="+pid)).json(); }
   catch(e){ maint=null; }
 
   if(token!==HEALTH_REQ_TOKEN||pid!==HEALTH_PRINTER_ID) return; // superseded by a newer switch/refresh
@@ -3251,7 +3259,7 @@ async function resumeSyncPollingIfRunning(printerId){
   let anyRunning=false;
   for(const root of ["logs","camera","gcodes"]){
     let st;
-    try{ st=await getJSON("/api/sync-status?printer="+printerId+"&root="+root); }
+    try{ st=await getJSON("api/sync-status?printer="+printerId+"&root="+root); }
     catch{ continue; }
     HEALTH_SYNC_STATE[syncKey(printerId,root)]=st;
     if(syncRunning(st)){
@@ -3758,7 +3766,7 @@ function openHealthServiceForm(prefillComponent){
   syncHealthSvcSaveEnabled();
   HEALTH_SVC_HOURS_SEC=null;
   $("healthSvcHours").textContent=t("maintenance.hours_loading");
-  getJSON("/api/printer-hours?printer="+HEALTH_PRINTER_ID).then(d=>{
+  getJSON("api/printer-hours?printer="+HEALTH_PRINTER_ID).then(d=>{
     HEALTH_SVC_HOURS_SEC=d.totalSeconds!=null?d.totalSeconds:null;
     $("healthSvcHours").textContent=HEALTH_SVC_HOURS_SEC!=null?fmtHours(HEALTH_SVC_HOURS_SEC):t("maintenance.hours_unavailable");
   }).catch(()=>{ $("healthSvcHours").textContent=t("maintenance.hours_unavailable"); });
@@ -3779,7 +3787,7 @@ async function toggleHealthOffline(){
   chk.disabled=true;
   st.className="pstatus work"; st.textContent=offline?t("maintenance.status_taking_offline"):t("maintenance.status_bringing_online");
   try{
-    const r=await postJSON("/api/maintenance-mode",{printer:HEALTH_PRINTER_ID,offline});
+    const r=await postJSON("api/maintenance-mode",{printer:HEALTH_PRINTER_ID,offline});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     st.className="pstatus ok"; st.textContent=d.maintenanceMode?t("maintenance.status_taken_offline"):t("maintenance.status_back_online");
@@ -3804,7 +3812,7 @@ async function saveHealthService(){
   $("healthSvcSave").disabled=true;
   st.className="pstatus work"; st.textContent=t("maintenance.status_saving");
   try{
-    const r=await postJSON("/api/maintenance",{printer:pid,entry});
+    const r=await postJSON("api/maintenance",{printer:pid,entry});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     st.className="pstatus ok"; st.textContent=t("maintenance.status_saved");
@@ -3929,7 +3937,7 @@ async function startSync(printerId,root){
   // lines rather than showing this root's error beside them.
   markOtherSyncResultsStale(printerId);
   try{
-    const r=await postJSON("/api/sync?printer="+printerId+"&root="+root,{});
+    const r=await postJSON("api/sync?printer="+printerId+"&root="+root,{});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     HEALTH_SYNC_STATE[key]={phase:"listing"};
@@ -3944,7 +3952,7 @@ async function pollSyncStatus(printerId,root){
   const key=syncKey(printerId,root);
   clearTimeout(HEALTH_SYNC_TIMERS[key]);
   let st;
-  try{ st=await getJSON("/api/sync-status?printer="+printerId+"&root="+root); }
+  try{ st=await getJSON("api/sync-status?printer="+printerId+"&root="+root); }
   catch{ HEALTH_SYNC_TIMERS[key]=setTimeout(()=>pollSyncStatus(printerId,root),1500); return; }
   HEALTH_SYNC_STATE[key]=st;
   if(syncRunning(st)){
@@ -4169,11 +4177,11 @@ function mountHealthServiceForm(){
 }
 async function refreshQueueDashboard(){
   try{
-    const status=await getJSON("/api/queue-management/status");
+    const status=await getJSON("api/queue-management/status");
     QUEUE_STORE_STATUS=status.store||QUEUE_STORE_STATUS;
   }catch{}
   const managedIds=PRINTERS_CFG.filter(p=>p.printerPoolId).map(p=>p.id);
-  const results=await Promise.all(managedIds.map(id=>getJSON("/api/queue/"+id).catch(()=>null)));
+  const results=await Promise.all(managedIds.map(id=>getJSON("api/queue/"+id).catch(()=>null)));
   QUEUE_VIEW_DATA={};
   managedIds.forEach((id,i)=>{ if(results[i]) QUEUE_VIEW_DATA[id]=results[i]; });
   renderQueueDashboard();
@@ -4665,7 +4673,7 @@ function wireQueueRows(root){
       const poolId=input.id.slice("autobalance-".length);
       const checked=input.checked;
       try{
-        const r=checkAuthFailure(await fetch("/api/printer-pools/"+poolId,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({autoBalance:checked})}));
+        const r=checkAuthFailure(await fetch("api/printer-pools/"+poolId,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({autoBalance:checked})}));
         const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status)));
         const cached=PRINTER_POOLS.find(p=>p.id===poolId); if(cached) cached.autoBalance=checked;
       }catch(err){ alert(err.message); input.checked=!checked; }
@@ -4681,10 +4689,10 @@ function wireQueueRows(root){
   root.querySelectorAll(".queue-pause-all").forEach(btn=>btn.addEventListener("click", async e=>{
     e.stopPropagation();
     const printers=PRINTERS_CFG.filter(p=>p.printerPoolId===btn.dataset.pool);
-    await Promise.allSettled(printers.map(p=>postJSON("/api/queue/"+p.id+"/pause",{})));
+    await Promise.allSettled(printers.map(p=>postJSON("api/queue/"+p.id+"/pause",{})));
     refreshQueueDashboard();
   }));
-  const simple=async(printerId,action)=>{ try{ await postJSON("/api/queue/"+printerId+"/"+action,{}); refreshQueueDashboard(); }catch(e){ alert(e.message); } };
+  const simple=async(printerId,action)=>{ try{ await postJSON("api/queue/"+printerId+"/"+action,{}); refreshQueueDashboard(); }catch(e){ alert(e.message); } };
   root.querySelectorAll(".qchip-actionable").forEach(b=>b.addEventListener("click", async e=>{
     e.stopPropagation();
     const cat=b.dataset.cat;
@@ -4697,7 +4705,7 @@ function wireQueueRows(root){
       const idx=PRINTERS_CFG.findIndex(x=>x.id===b.dataset.printer);
       if(idx<0){ alert(t("settings.printers.pool_error_unknown_printer")); return; }
       try{
-        const r=checkAuthFailure(await postJSON("/api/printctl",{printer:idx,action:"eject"}));
+        const r=checkAuthFailure(await postJSON("api/printctl",{printer:idx,action:"eject"}));
         const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status)));
         refreshQueueDashboard();
       }catch(err){ alert(err.message); }
@@ -4723,14 +4731,14 @@ function wireQueueRows(root){
     const idx=PRINTERS_CFG.findIndex(x=>x.id===b.dataset.printer);
     if(idx<0){ alert(t("settings.printers.pool_error_unknown_printer")); return; }
     try{
-      const r=checkAuthFailure(await postJSON("/api/printctl",{printer:idx,action:"cancel"}));
+      const r=checkAuthFailure(await postJSON("api/printctl",{printer:idx,action:"cancel"}));
       const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status)));
       refreshQueueDashboard();
     }catch(e){ alert(e.message); }
   }));
   root.querySelectorAll(".queue-remove-item").forEach(b=>b.addEventListener("click", async e=>{
     e.stopPropagation();
-    try{ const r=checkAuthFailure(await fetch("/api/queue/"+b.dataset.printer+"/items/"+b.dataset.item,{method:"DELETE"})); const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status))); refreshQueueDashboard(); }
+    try{ const r=checkAuthFailure(await fetch("api/queue/"+b.dataset.printer+"/items/"+b.dataset.item,{method:"DELETE"})); const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status))); refreshQueueDashboard(); }
     catch(e){ alert(e.message); }
   }));
   root.querySelectorAll(".queue-resolve").forEach(b=>b.addEventListener("click", async e=>{
@@ -4738,8 +4746,8 @@ function wireQueueRows(root){
     try{
       const action=b.dataset.action;
       const r=checkAuthFailure(action==="accept-file-change"
-        ? await fetch("/api/queue/"+b.dataset.printer+"/accept-file-change",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
-        : await postJSON("/api/queue/"+b.dataset.printer+"/resolve",{action}));
+        ? await fetch("api/queue/"+b.dataset.printer+"/accept-file-change",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
+        : await postJSON("api/queue/"+b.dataset.printer+"/resolve",{action}));
       const d=await r.json(); if(!r.ok||d.error) throw new Error(queueErrorText(d,d.error||("HTTP "+r.status)));
       refreshQueueDashboard();
     }catch(e){ alert(e.message); }
@@ -4787,7 +4795,7 @@ async function moveFilesTo(filePaths, targetSub){
   const st=$("fileOpStatus");
   delete st.dataset.moveSuccess;
   try{
-    const r=await postJSON("/api/files/move",{files,targetSub});
+    const r=await postJSON("api/files/move",{files,targetSub});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
     const failed=(d.results||[]).filter(x=>!x.ok);
     if(failed.length){
@@ -4823,7 +4831,7 @@ async function doCreateFolder(){
   const btn=$("newFolderModalCreate"); btn.disabled=true;
   st.className="pstatus work"; st.textContent=t("files.status_creating");
   try{
-    const r=await postJSON("/api/files/mkdir",{sub:CURRENT_SUB,name});
+    const r=await postJSON("api/files/mkdir",{sub:CURRENT_SUB,name});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
     closeNewFolderModal();
     loadFiles(CURRENT_SUB);
@@ -4846,7 +4854,7 @@ async function uploadLocalFiles(fileList){
     const f=files[i];
     st.className="pstatus work"; st.textContent=t("files.uploading_status",{name:f.name,current:i+1,total:files.length});
     try{
-      const r=await fetch("/api/files/upload?sub="+encodeURIComponent(CURRENT_SUB)+"&name="+encodeURIComponent(f.name), {
+      const r=await fetch("api/files/upload?sub="+encodeURIComponent(CURRENT_SUB)+"&name="+encodeURIComponent(f.name), {
         method:"POST", headers:{"Content-Type":"application/octet-stream"}, body:f
       });
       const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
@@ -4869,7 +4877,7 @@ async function selectFile(name){
   $("jlname").textContent=t("files.opening_status",{name});
   $("jobloading").classList.add("show");
   $("jobcard").classList.remove("show");
-  try{ const m=await getJSON("/api/map?file="+encodeURIComponent(name));
+  try{ const m=await getJSON("api/map?file="+encodeURIComponent(name));
     $("jobloading").classList.remove("show");
     if(m.error){ MAP=null; if(!URL_PRINTER_FILTER) $("jobsechead").style.display="none"; return; }
     MAP=m; renderJob(); renderList(); renderFleet();
@@ -4938,7 +4946,7 @@ function isCompatiblePrinter(detectedBrand, printerBrand){
 function renderJob(){
   $("jobcard").classList.add("show");
   const fsFork=MAP.fsFork||t("fleet.job.fs_fork_fallback");
-  $("jt").innerHTML=esc(stripExt(SELECTED))+(MAP.isFS?` <img src="/fs-badge.svg" class="fs-badge" title="${esc(t("fleet.job.full_spectrum_title",{fork:fsFork}))}">`:``);
+  $("jt").innerHTML=esc(stripExt(SELECTED))+(MAP.isFS?` <img src="fs-badge.svg" class="fs-badge" title="${esc(t("fleet.job.full_spectrum_title",{fork:fsFork}))}">`:``);
   // meta line: time · weight · cost
   const totalGrams=MAP.palette.reduce((sum,s)=>sum+(parseFloat(s.wt)||0),0);
   const timeHours=parseTimeToHours((MAP.meta||[])[0]);
@@ -4962,7 +4970,7 @@ function renderJob(){
   thumb.style.display="none";
   thumb.onerror=()=>{ thumb.style.display="none"; };
   thumb.onload=()=>{ thumb.style.display="block"; };
-  thumb.src="/api/local-thumbnail?file="+encodeURIComponent(SELECTED);
+  thumb.src="api/local-thumbnail?file="+encodeURIComponent(SELECTED);
   if(thumb.complete && thumb.naturalWidth>0) thumb.style.display="block";
   const need=neededColors();
   $("needcount").textContent=tn("fleet.job.needed_colors",need.length);
@@ -5074,7 +5082,7 @@ async function initialFleetLoad(){
   let done=0;
   if(sub) sub.textContent=t("global.splash.connecting_progress",{done:pad(0),total:pad(n)});
   FLEET=await Promise.all(PRINTERS_CFG.map((cfg,i)=>
-    fetch("/api/fleet?printer="+i,{signal:AbortSignal.timeout(15000)})
+    fetch("api/fleet?printer="+i,{signal:AbortSignal.timeout(15000)})
       .then(r=>r.json())
       .catch(()=>({ id:i, name:cfg.name||cfg.url, brand:cfg.brand||'SnapMaker', url:cfg.url, online:false, error:'unreachable' }))
       .then(r=>{ done++; if(sub) sub.textContent=t("global.splash.connecting_progress",{done:pad(done),total:pad(n)}); return r; })
@@ -5089,7 +5097,7 @@ async function loadFleet(){
   if(!FLEET.length) renderSkeletonFleet();
   try{
     // Own timeout so a hung request can never wedge the in-flight guard shut.
-    const r=await fetch("/api/fleet",{signal:AbortSignal.timeout(15000)});
+    const r=await fetch("api/fleet",{signal:AbortSignal.timeout(15000)});
     // A session that expired mid-poll (401) is not "fleet unreachable" — don't
     // let an {error:...} body get parsed into FLEET, which isn't an array.
     if(checkAuthFailure(r).status===401) return;
@@ -5470,13 +5478,13 @@ function buildCardHtml(p, need, dragEnabled){
       }
     }
     card.innerHTML=`
-      <div class="top">${gridToolbarActive()?`<label class="cam-select"><input type="checkbox" class="cam-chk checkbox-input on-surface" data-camsel="${p.id}"${CAM_SELECTED.has(p.id)?' checked':''}></label>`:''}<span class="pn"><span><div class="hdr-brand">${esc(p.brand||'SnapMaker')}</div><div class="hdr-name">${esc(p.name)}</div></span></span><div class="card-right">${p.online?`<div class="card-pills">${canEject(p)&&!monitorOnly(p)?`<button class="pill-btn pill-btn-sm" ${canAct()?"":"disabled"} data-eject="${p.id}" title="${esc(t("printer.action_eject"))}"><img src="/eject-pill.svg" alt="${esc(t("printer.action_eject"))}"></button>`:''}${p.capabilities?.camera?`<button class="pill-btn pill-btn-sm" data-snap="${p.id}" title="${esc(t("printer.action_camera"))}"><img src="/camera-pill.svg" alt="${esc(t("printer.action_camera"))}"></button>`:''}${p.capabilities?.webUi?`<a class="pill-btn pill-btn-sm" href="${esc(p.url||'#')}" target="_blank" rel="noopener" title="${esc(t("printer.action_web_interface_title"))}"><img src="/fluidd-pill.svg" alt="${esc(t("printer.action_web_interface_alt"))}"></a>`:''}</div>`:''}<span class="status-badge${dragEnabled?' drag-handle':''}"${dragEnabled?` draggable="true" title="${esc(t("fleet.card.drag_title"))}"`:''} style="--status-color:${statusColor}">${statusTxt}</span></div></div>
+      <div class="top">${gridToolbarActive()?`<label class="cam-select"><input type="checkbox" class="cam-chk checkbox-input on-surface" data-camsel="${p.id}"${CAM_SELECTED.has(p.id)?' checked':''}></label>`:''}<span class="pn"><span><div class="hdr-brand">${esc(p.brand||'SnapMaker')}</div><div class="hdr-name">${esc(p.name)}</div></span></span><div class="card-right">${p.online?`<div class="card-pills">${canEject(p)&&!monitorOnly(p)?`<button class="pill-btn pill-btn-sm" ${canAct()?"":"disabled"} data-eject="${p.id}" title="${esc(t("printer.action_eject"))}"><img src="eject-pill.svg" alt="${esc(t("printer.action_eject"))}"></button>`:''}${p.capabilities?.camera?`<button class="pill-btn pill-btn-sm" data-snap="${p.id}" title="${esc(t("printer.action_camera"))}"><img src="camera-pill.svg" alt="${esc(t("printer.action_camera"))}"></button>`:''}${p.capabilities?.webUi?`<a class="pill-btn pill-btn-sm" href="${esc(p.url||'#')}" target="_blank" rel="noopener" title="${esc(t("printer.action_web_interface_title"))}"><img src="fluidd-pill.svg" alt="${esc(t("printer.action_web_interface_alt"))}"></a>`:''}</div>`:''}<span class="status-badge${dragEnabled?' drag-handle':''}"${dragEnabled?` draggable="true" title="${esc(t("fleet.card.drag_title"))}"`:''} style="--status-color:${statusColor}">${statusTxt}</span></div></div>
       <div class="prism-line${p.state==='error'?' err-line':p.state==='cancelled'?' cancelled-line':p.state==='paused'?' pause-line':p.state==='complete'?' complete-line':''}"></div>
       ${VIEW_MODE==='camera'?(!p.online
           ? `<div class="cam-shot-placeholder"><span>${esc(t("printer_status.offline"))}</span></div>`
           : p.capabilities?.camera
             ? `<div class="cam-shot-slot" data-camslot="${p.id}"></div>`
-            : `<div class="cam-shot-placeholder"><img class="cam-shot-placeholder-icon" src="/camera-disabled.svg" alt=""><span>${esc(t("fleet.camera.disabled_label"))}</span></div>`
+            : `<div class="cam-shot-placeholder"><img class="cam-shot-placeholder-icon" src="camera-disabled.svg" alt=""><span>${esc(t("fleet.camera.disabled_label"))}</span></div>`
         ):''}
       ${p.queuedFile?queuedFileBannerHtml(p):''}
       ${p.online&&(p.errorCode||p.message)?(()=>{
@@ -5506,7 +5514,7 @@ function buildCardHtml(p, need, dragEnabled){
         const queuedReady=p.queuedFile&&p.queuedFile.status==='ready'?p.queuedFile:null;
         const stem=queuedReady?queuedReady.name:(p.filename||"");
         const thumbCell=stem&&!noThumbs(p)
-          ? `<div class="stats-cell stats-thumb-cell" data-thumb="${p.id}" tabindex="0" role="button" title="${esc(t("fleet.card.thumb_enlarge_title"))}"><img class="stats-thumb" src="/api/thumbnail?printer=${p.id}&file=${encodeURIComponent(stem)}&t=${thumbToken(p,stem)}" alt="" onerror="thumbRetry(this)"></div>`
+          ? `<div class="stats-cell stats-thumb-cell" data-thumb="${p.id}" tabindex="0" role="button" title="${esc(t("fleet.card.thumb_enlarge_title"))}"><img class="stats-thumb" src="api/thumbnail?printer=${p.id}&file=${encodeURIComponent(stem)}&t=${thumbToken(p,stem)}" alt="" onerror="thumbRetry(this)"></div>`
           : `<div class="stats-cell stats-thumb-cell"><span class="stats-thumb-empty">—</span></div>`;
         return `<div class="stats-bar">`+
           `<div class="stats-cell"><div class="stats-cell-label">${esc(t("fleet.card.hotend_label"))}</div><div class="stats-cell-val"><span data-live="hotend-val">${extA}°</span><span class="stats-sep">/</span><span class="stats-inline-target" data-live="hotend-target">${hotendBar.targetTxt}</span></div><div class="stats-mini-bar"><div class="stats-mini-fill" data-live="hotend-bar" style="${heatBarFillStyle(hotendBar)}"></div></div></div>`+
@@ -5555,7 +5563,7 @@ function buildCardHtml(p, need, dragEnabled){
           ? progRowHtml
           : camView
             ? `<div class="cam-prog-file">`+
-                `<div class="prog-file-thumb"${stem&&!noThumbs(p)?` data-thumb="${p.id}" tabindex="0" role="button" title="${esc(t("fleet.card.thumb_enlarge_title"))}"`:''}>${stem&&!noThumbs(p)?`<img class="stats-thumb" src="/api/thumbnail?printer=${p.id}&file=${encodeURIComponent(stem)}&t=${thumbToken(p,stem)}" alt="" onerror="thumbRetry(this)">`:''}</div>`+
+                `<div class="prog-file-thumb"${stem&&!noThumbs(p)?` data-thumb="${p.id}" tabindex="0" role="button" title="${esc(t("fleet.card.thumb_enlarge_title"))}"`:''}>${stem&&!noThumbs(p)?`<img class="stats-thumb" src="api/thumbnail?printer=${p.id}&file=${encodeURIComponent(stem)}&t=${thumbToken(p,stem)}" alt="" onerror="thumbRetry(this)">`:''}</div>`+
                 `<span class="prog-file-name">${esc(stem||'—')}</span>`+
                 progRowHtml+
               `</div>`
@@ -5579,19 +5587,19 @@ function buildCardHtml(p, need, dragEnabled){
           ? monitorOnlyNoteHtml()
           : busy
           ? (p.state==="paused"
-                ? `<button class="btn-chip" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="resume" title="${esc(t("printer.action_resume"))}"><img src="/print-icon.svg" alt=""><span>${esc(t("printer.action_resume"))}</span></button>`
-                : `<button class="btn-chip" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="pause" title="${esc(t("printer.action_pause"))}"><img src="/pause-icon.svg" alt=""><span>${esc(t("printer.action_pause"))}</span></button>`)
+                ? `<button class="btn-chip" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="resume" title="${esc(t("printer.action_resume"))}"><img src="print-icon.svg" alt=""><span>${esc(t("printer.action_resume"))}</span></button>`
+                : `<button class="btn-chip" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="pause" title="${esc(t("printer.action_pause"))}"><img src="pause-icon.svg" alt=""><span>${esc(t("printer.action_pause"))}</span></button>`)
             // Visible label corrected from the old "Stop" to match the title,
             // the confirm() dialog's own wording, and the real action
             // (data-act="cancel", an irreversible cancel — not a pause-like
             // stop). Icon/handler unchanged, text only.
-            + `<button class="btn-chip danger" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="cancel" title="${esc(t("common.cancel"))}"><img src="/stop-icon.svg" alt=""><span>${esc(t("common.cancel"))}</span></button>`
-            + (p.capabilities?.excludeObject&&p.plate&&p.plate.total>1?`<button class="btn-chip" ${canAct()?"":"disabled"} data-plate="${p.id}" title="${esc(t("printer.action_plate_title",{done:p.plate.total-p.plate.excluded,total:p.plate.total}))}"><img src="/plate-icon.svg" alt=""><span>${esc(t("printer.action_plate"))}</span></button>`:"")
-            + `<button class="btn-chip danger" ${canAct()&&!estopUnsupported(p)?"":"disabled"} data-estop="${p.id}" title="${esc(estopUnsupported(p)?t("printer.action_estop_unsupported_title"):t("printer.action_estop_title"))}"><img src="/estop-icon.svg" alt=""><span>${esc(t("printer.action_estop"))}</span></button>`
-          : `<button class="btn-chip" ${canSend&&canAct()?"":"disabled"} data-id="${p.id}" data-start="0" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):esc(t("printer.action_upload_title"))}"><img src="/upload-file.svg" alt=""><span>${esc(t("printer.action_upload"))}</span></button>`
-            + `<button class="btn-chip" ${p.online&&!busy&&!maintMode&&canAct()?"":"disabled"} data-id="${p.id}" data-start="1" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):SELECTED?esc(t("printer.action_print_title_selected")):esc(t("printer.action_print_title_pick"))}"><img src="/print-icon.svg" alt=""><span>${esc(t("printer.action_print"))}</span></button>`
-            + `<button class="btn-chip" ${canAct()?"":"disabled"} data-preheat="${p.id}" title="${esc(t("printer.action_preheat"))}"><img src="/preheat-icon.svg" alt=""><span>${esc(t("printer.action_preheat"))}</span></button>`
-            + (p.state==='complete'&&p.filename?`<button class="btn-chip" ${canAct()?"":"disabled"} data-reprint="${p.id}" title="${esc(t("printer.action_reprint_title",{filename:p.filename}))}"><img src="/reprint-icon.svg" alt=""><span>${esc(t("printer.action_reprint"))}</span></button>`:"")
+            + `<button class="btn-chip danger" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="cancel" title="${esc(t("common.cancel"))}"><img src="stop-icon.svg" alt=""><span>${esc(t("common.cancel"))}</span></button>`
+            + (p.capabilities?.excludeObject&&p.plate&&p.plate.total>1?`<button class="btn-chip" ${canAct()?"":"disabled"} data-plate="${p.id}" title="${esc(t("printer.action_plate_title",{done:p.plate.total-p.plate.excluded,total:p.plate.total}))}"><img src="plate-icon.svg" alt=""><span>${esc(t("printer.action_plate"))}</span></button>`:"")
+            + `<button class="btn-chip danger" ${canAct()&&!estopUnsupported(p)?"":"disabled"} data-estop="${p.id}" title="${esc(estopUnsupported(p)?t("printer.action_estop_unsupported_title"):t("printer.action_estop_title"))}"><img src="estop-icon.svg" alt=""><span>${esc(t("printer.action_estop"))}</span></button>`
+          : `<button class="btn-chip" ${canSend&&canAct()?"":"disabled"} data-id="${p.id}" data-start="0" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):esc(t("printer.action_upload_title"))}"><img src="upload-file.svg" alt=""><span>${esc(t("printer.action_upload"))}</span></button>`
+            + `<button class="btn-chip" ${p.online&&!busy&&!maintMode&&canAct()?"":"disabled"} data-id="${p.id}" data-start="1" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):SELECTED?esc(t("printer.action_print_title_selected")):esc(t("printer.action_print_title_pick"))}"><img src="print-icon.svg" alt=""><span>${esc(t("printer.action_print"))}</span></button>`
+            + `<button class="btn-chip" ${canAct()?"":"disabled"} data-preheat="${p.id}" title="${esc(t("printer.action_preheat"))}"><img src="preheat-icon.svg" alt=""><span>${esc(t("printer.action_preheat"))}</span></button>`
+            + (p.state==='complete'&&p.filename?`<button class="btn-chip" ${canAct()?"":"disabled"} data-reprint="${p.id}" title="${esc(t("printer.action_reprint_title",{filename:p.filename}))}"><img src="reprint-icon.svg" alt=""><span>${esc(t("printer.action_reprint"))}</span></button>`:"")
         }
       </div>
       <div class="pstatus" id="pst-${p.id}"></div>`;
@@ -5824,7 +5832,7 @@ async function bulkCtl(act){
   const msg=$("camBulkMsg");
   if(msg){ msg.className="pstatus work"; msg.textContent=t("fleet.toolbar.bulk_working"); }
   const results=await Promise.allSettled(eligible.map(async id=>{
-    const r=await postJSON("/api/printctl",{printer:id,action:act});
+    const r=await postJSON("api/printctl",{printer:id,action:act});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
   }));
@@ -5871,7 +5879,7 @@ async function saveTagsEditor(){
   await Promise.allSettled(changed.map(r=>{
     const id=parseInt(r.dataset.tagsrow,10);
     const tags=r.querySelector(".tags-row-input").value.split(",").map(t=>t.trim()).filter(Boolean);
-    return postJSON("/api/printer-tags",{printer:id,tags});
+    return postJSON("api/printer-tags",{printer:id,tags});
   }));
   closeTagsModal();
   loadFleet();
@@ -5937,7 +5945,7 @@ function renderFleetListRows(camFleet, wrap, camRefreshMs){
     const fileCell=stem&&noThumbs(p)
       ? `<div class="list-file-cell"><span class="list-file-name">${esc(stem)}</span></div>`
       : stem
-      ? `<div class="list-file-cell" data-thumb="${p.id}" tabindex="0" role="button" title="${esc(t("fleet.card.thumb_enlarge_title"))}"><img class="list-thumb" src="/api/thumbnail?printer=${p.id}&file=${encodeURIComponent(stem)}&t=${thumbToken(p,stem)}" alt="" onerror="thumbRetry(this)"><span class="list-file-name">${esc(stem)}</span></div>`
+      ? `<div class="list-file-cell" data-thumb="${p.id}" tabindex="0" role="button" title="${esc(t("fleet.card.thumb_enlarge_title"))}"><img class="list-thumb" src="api/thumbnail?printer=${p.id}&file=${encodeURIComponent(stem)}&t=${thumbToken(p,stem)}" alt="" onerror="thumbRetry(this)"><span class="list-file-name">${esc(stem)}</span></div>`
       : `<span class="list-file-empty">—</span>`;
     const pct=p.online&&p.progress!=null?p.progress*100:null;
     const pctCls=p.state==='error'?'red':p.state==='paused'?'amber':p.state==='complete'?'green':'cyan';
@@ -5974,13 +5982,13 @@ function renderFleetListRows(camFleet, wrap, camRefreshMs){
       ? monitorOnlyNoteHtml(true)
       : busy
       ? (p.state==="paused"
-            ? `<button class="btn-chip icon-only" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="resume" title="${esc(t("printer.action_resume"))}"><img src="/print-icon.svg" alt=""></button>`
-            : `<button class="btn-chip icon-only" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="pause" title="${esc(t("printer.action_pause"))}"><img src="/pause-icon.svg" alt=""></button>`)
-        + `<button class="btn-chip icon-only danger" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="cancel" title="${esc(t("common.cancel"))}"><img src="/stop-icon.svg" alt=""></button>`
-        + `<button class="btn-chip icon-only danger" ${canAct()&&!estopUnsupported(p)?"":"disabled"} data-estop="${p.id}" title="${esc(estopUnsupported(p)?t("printer.action_estop_unsupported_title"):t("printer.action_estop_title"))}"><img src="/estop-icon.svg" alt=""></button>`
-      : `<button class="btn-chip icon-only" ${canSend&&canAct()?"":"disabled"} data-id="${p.id}" data-start="0" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):esc(t("printer.action_upload_title"))}"><img src="/upload-file.svg" alt=""></button>`
-        + `<button class="btn-chip icon-only" ${p.online&&!busy&&!maintMode&&canAct()?"":"disabled"} data-id="${p.id}" data-start="1" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):SELECTED?esc(t("printer.action_print_title_selected")):esc(t("printer.action_print_title_pick"))}"><img src="/print-icon.svg" alt=""></button>`
-        + `<button class="btn-chip icon-only" ${canAct()?"":"disabled"} data-preheat="${p.id}" title="${esc(t("printer.action_preheat"))}"><img src="/preheat-icon.svg" alt=""></button>`;
+            ? `<button class="btn-chip icon-only" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="resume" title="${esc(t("printer.action_resume"))}"><img src="print-icon.svg" alt=""></button>`
+            : `<button class="btn-chip icon-only" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="pause" title="${esc(t("printer.action_pause"))}"><img src="pause-icon.svg" alt=""></button>`)
+        + `<button class="btn-chip icon-only danger" ${canAct()?"":"disabled"} data-ctl="${p.id}" data-act="cancel" title="${esc(t("common.cancel"))}"><img src="stop-icon.svg" alt=""></button>`
+        + `<button class="btn-chip icon-only danger" ${canAct()&&!estopUnsupported(p)?"":"disabled"} data-estop="${p.id}" title="${esc(estopUnsupported(p)?t("printer.action_estop_unsupported_title"):t("printer.action_estop_title"))}"><img src="estop-icon.svg" alt=""></button>`
+      : `<button class="btn-chip icon-only" ${canSend&&canAct()?"":"disabled"} data-id="${p.id}" data-start="0" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):esc(t("printer.action_upload_title"))}"><img src="upload-file.svg" alt=""></button>`
+        + `<button class="btn-chip icon-only" ${p.online&&!busy&&!maintMode&&canAct()?"":"disabled"} data-id="${p.id}" data-start="1" title="${maintMode?esc(t("printer.action_maintenance_mode_title")):SELECTED?esc(t("printer.action_print_title_selected")):esc(t("printer.action_print_title_pick"))}"><img src="print-icon.svg" alt=""></button>`
+        + `<button class="btn-chip icon-only" ${canAct()?"":"disabled"} data-preheat="${p.id}" title="${esc(t("printer.action_preheat"))}"><img src="preheat-icon.svg" alt=""></button>`;
     const tr=document.createElement("tr");
     tr.className="list-row"+(p.online?"":" offline");
     tr.innerHTML=`<td class="list-th-chk"><label class="cam-select"><input type="checkbox" class="cam-chk checkbox-input" data-camsel="${p.id}"${CAM_SELECTED.has(p.id)?' checked':''}></label></td>`+
@@ -5988,7 +5996,7 @@ function renderFleetListRows(camFleet, wrap, camRefreshMs){
       `<td>${(p.tags||[]).filter(t=>!isColorTag(t)).map(t=>`<span class="list-tag">${esc(t)}</span>`).join("")||'<span class="list-file-empty">—</span>'}</td>`+
       `<td>${fileCell}</td>`+
       `<td><span class="status-badge" style="--status-color:${statusColor}">${statusTxt}</span></td>`+
-      `<td class="list-th-cam">${p.capabilities?.camera?`<button class="pill-btn pill-btn-sm list-status-cam" data-snap="${p.id}" title="${esc(t("fleet.list.view_camera_title",{name:p.name}))}"><img src="/camera-pill.svg" alt="${esc(t("printer.action_camera"))}"></button>`:''}</td>`+
+      `<td class="list-th-cam">${p.capabilities?.camera?`<button class="pill-btn pill-btn-sm list-status-cam" data-snap="${p.id}" title="${esc(t("fleet.list.view_camera_title",{name:p.name}))}"><img src="camera-pill.svg" alt="${esc(t("printer.action_camera"))}"></button>`:''}</td>`+
       `<td>${progressCell}</td>`+
       `<td class="list-layers-cell">${layersCell}</td>`+
       `<td><div class="list-filament-cell">${filamentCell}</div></td>`+
@@ -6027,7 +6035,7 @@ async function printQueuedFile(printerId, filename, prefs){
   if(st){ st.className="pstatus work"; st.textContent=t("fleet.queued.starting_print_status"); }
   let ok=false;
   try{
-    const r=await postJSON("/api/printfile",{printer:printerId,filename,map:{},prefs});
+    const r=await postJSON("api/printfile",{printer:printerId,filename,map:{},prefs});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
     ok=await pollJob(d.jobId, st, true, d.mapped||0, null, null, prefs, printerId);
     // pollJob writes its own generic completion text. This path had its own
@@ -6388,7 +6396,7 @@ async function pushTo(printer, start, extraUI, prefs){
   PUSHES++;
   let ok=false;
   try{
-    const r=await postJSON("/api/print",{file:SELECTED,printer,start,map,prefs});
+    const r=await postJSON("api/print",{file:SELECTED,printer,start,map,prefs});
     const d=await r.json(); if(!r.ok||d.error||(!d.jobId&&d.mode!=="pending")) throw new Error(d.error||("HTTP "+r.status));
     if(d.mode==="pending"){
       // Printer's busy — server queued the file instead of racing an upload
@@ -6476,7 +6484,7 @@ async function pollJob(jobId, st, start, mapped, btn, extraUI, prefs, printerId)
     for(;;){
       await new Promise(r=>setTimeout(r,400));
       let d;
-      try{ d=await getJSON("/api/print-status?job="+encodeURIComponent(jobId)); }catch(e){ continue; }
+      try{ d=await getJSON("api/print-status?job="+encodeURIComponent(jobId)); }catch(e){ continue; }
       if(d.error){
         if(st){ st.className="pstatus err"; st.textContent=d.error; }
         if(extraUI) setRowUI(extraUI, 100, "err", d.error);
@@ -6657,7 +6665,7 @@ function openHoldConfirmDialog(opts){
     sendingLabel: opts.sendingLabel, doneLabel: opts.doneLabel,
     holding:false, raf:null, start:null, sending:false, lastSecond:-1
   };
-  $("hcIcon").src = opts.iconSrc || "/estop-icon.svg";
+  $("hcIcon").src = opts.iconSrc || "estop-icon.svg";
   $("hcTitle").textContent = opts.title;
   $("hcSubtitle").textContent = opts.subtitle || "";
   $("hcSubtitle").style.display = opts.subtitle ? "" : "none";
@@ -6785,7 +6793,7 @@ async function doEstop(printerId){
   const st=$("pst-"+printerId);
   openHoldConfirmDialog({
     mode: "hold",
-    iconSrc: "/estop-icon.svg",
+    iconSrc: "estop-icon.svg",
     title: t("fleet.estop.title"),
     subtitle: name,
     panelHtml, consequencesHtml,
@@ -6799,7 +6807,7 @@ async function doEstop(printerId){
     onConfirm: async ()=>{
       if(st){ st.className="pstatus work"; st.textContent=t("fleet.estop_status_sending"); }
       try{
-        const r=await postJSON("/api/printctl",{printer:printerId,action:"estop"});
+        const r=await postJSON("api/printctl",{printer:printerId,action:"estop"});
         const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
         if(st){ st.className="pstatus err"; st.textContent=t("fleet.estop_status_done"); }
         setTimeout(loadFleet, 1500);
@@ -6866,7 +6874,7 @@ async function doCancelPrint(printerId){
   const st=$("pst-"+printerId);
   openHoldConfirmDialog({
     mode: "click",
-    iconSrc: "/stop-icon.svg",
+    iconSrc: "stop-icon.svg",
     title: t("fleet.cancelPrint.title"),
     subtitle: name,
     panelHtml, consequencesHtml,
@@ -6878,7 +6886,7 @@ async function doCancelPrint(printerId){
     onConfirm: async ()=>{
       if(st){ st.className="pstatus work"; st.textContent=t(CTL_WORKING_KEYS.cancel); }
       try{
-        const r=await postJSON("/api/printctl",{printer:printerId,action:"cancel"});
+        const r=await postJSON("api/printctl",{printer:printerId,action:"cancel"});
         const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
         if(st){ st.className="pstatus ok"; st.textContent=t(CTL_DONE_KEYS.cancel); }
         loadFleet();
@@ -6894,7 +6902,7 @@ async function ctl(printer, act){
   const st=$("pst-"+printer);
   if(st){ st.className="pstatus work"; st.textContent=t(CTL_WORKING_KEYS[act]); }
   try{
-    const r=await postJSON("/api/printctl",{printer,action:act});
+    const r=await postJSON("api/printctl",{printer,action:act});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
     if(st){ st.className="pstatus ok"; st.textContent=t(CTL_DONE_KEYS[act]); }
     loadFleet();
@@ -6919,7 +6927,7 @@ function renderPfileInfo(){
   // themselves internally (their thumbnail cache is stem-keyed), but
   // FlashForge's getThumbnail wants the exact filename and misreads a
   // pre-stripped one as "not found", falling back to a generic icon.
-  const thumb=`/api/thumbnail?printer=${PFILE_PRINTER}&file=${encodeURIComponent(PFILE_SELECTED)}`;
+  const thumb=`api/thumbnail?printer=${PFILE_PRINTER}&file=${encodeURIComponent(PFILE_SELECTED)}`;
   const totalGrams=PFILE_META.palette.reduce((sum,s)=>sum+(parseFloat(s.wt)||0),0);
   const timeSec=PFILE_META.estimatedTime||0;
   const fCost=(FILAMENT_COST>0&&totalGrams>0)?(FILAMENT_COST/1000)*totalGrams:0;
@@ -6957,7 +6965,7 @@ function closePrinterFiles(){ $("pfilemodal").classList.remove("show"); PFILE_PR
 async function loadPrinterFiles(){
   if(PFILE_PRINTER===null) return;
   try{
-    const d=await getJSON("/api/printer-files?printer="+PFILE_PRINTER);
+    const d=await getJSON("api/printer-files?printer="+PFILE_PRINTER);
     if(d.error) throw new Error(d.error);
     PFILE_FILES=d.files||[];
     renderPfileList();
@@ -6975,7 +6983,7 @@ function renderPfileList(){
     const bare=stripExt(f.path);
     const disp=bare.length>40?bare.slice(0,37)+"…":bare;
     const isSel=PFILE_SELECTED===f.path;
-    const fsBadge=isSel&&PFILE_META&&PFILE_META.isFS?`<img src="/fs-badge.svg" class="fs-badge" title="${esc(t("files.full_spectrum_title"))}">`:``;
+    const fsBadge=isSel&&PFILE_META&&PFILE_META.isFS?`<img src="fs-badge.svg" class="fs-badge" title="${esc(t("files.full_spectrum_title"))}">`:``;
     return `<button class="plate-item${isSel?" sel":""}" data-f="${esc(f.path)}" title="${esc(f.path)}">`+
       `<span class="pi-check" aria-hidden="true">${isSel?"✓":""}</span><span class="pi-name">${esc(disp)}${fsBadge}</span>`+
       `<span class="pi-tag">${fmtSize(f.size)} · ${fmtTime(f.modified*1000)}</span></button>`;
@@ -6997,7 +7005,7 @@ async function loadPfileMeta(file){
   $("pfileinfo").innerHTML="";
   $("pfilemap").innerHTML=`<div class="browse-empty">${esc(t("fleet.modal.pfile.reading_colors"))}</div>`;
   try{
-    const meta=await getJSON("/api/printer-file-meta?printer="+PFILE_PRINTER+"&file="+encodeURIComponent(file));
+    const meta=await getJSON("api/printer-file-meta?printer="+PFILE_PRINTER+"&file="+encodeURIComponent(file));
     if(PFILE_SELECTED!==file) return; // user already clicked another file
     if(meta.error) throw new Error(meta.error);
     PFILE_META=meta;
@@ -7055,7 +7063,7 @@ async function doPrintFile(){
   st.textContent=t("fleet.queued.starting_print_status");
   $("pfilego").disabled=true;
   try{
-    const r=await postJSON("/api/printfile",{printer:PFILE_PRINTER,filename:PFILE_SELECTED,map:ALLOW_MAPPING?PFILE_MAP:{},prefs:PFILE_PREFS});
+    const r=await postJSON("api/printfile",{printer:PFILE_PRINTER,filename:PFILE_SELECTED,map:ALLOW_MAPPING?PFILE_MAP:{},prefs:PFILE_PREFS});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
     // Same job-based contract as printQueuedFile: the modal must not close on
     // the 200, or it would hide a mapping/start failure that lands seconds or
@@ -7072,7 +7080,7 @@ async function ejectFile(printerId){
   const p=FLEET.find(f=>f.id===printerId);
   if(!p) return;
   try{
-    const r=await fetch('/api/printctl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({printer:printerId,action:'eject'})});
+    const r=await fetch('api/printctl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({printer:printerId,action:'eject'})});
     if(!r.ok){ const j=await r.json().catch(()=>({})); console.error('Eject failed',j.error); }
   }catch(e){ console.error('Eject error',e.message); }
   // Refresh the card this just changed, the same way every other action does.
@@ -7183,7 +7191,7 @@ async function loadSnapshot(){
     // Refresh) — always bypass the server's short-lived snapshot cache
     // (used to throttle the camera-view grid's automatic polling) so a
     // manual refresh never shows the same frame it just showed.
-    const r=await fetch('/api/snapshot?printer='+SNAP_PRINTER+'&fresh=1&t='+Date.now());
+    const r=await fetch('api/snapshot?printer='+SNAP_PRINTER+'&fresh=1&t='+Date.now());
     if(!r.ok){
       let msg=t("fleet.modal.snapshot.server_error",{status:r.status});
       try{ const j=await r.json(); msg=j.error||msg; }catch{}
@@ -7215,7 +7223,7 @@ function openThumb(printerId){
   if(!name){ w.innerHTML='<span style="color:var(--ink-dim)">No file loaded</span>'; }
   else {
     const stem=name;
-    w.innerHTML='<img src="/api/thumbnail?printer='+p.id+'&file='+encodeURIComponent(stem)+'&t='+thumbToken(p,stem)+'" style="max-width:100%;border-radius:8px" onerror="this.parentNode.innerHTML=\'<span style=color:var(--ink-dim)>No thumbnail available</span>\'">';
+    w.innerHTML='<img src="api/thumbnail?printer='+p.id+'&file='+encodeURIComponent(stem)+'&t='+thumbToken(p,stem)+'" style="max-width:100%;border-radius:8px" onerror="this.parentNode.innerHTML=\'<span style=color:var(--ink-dim)>No thumbnail available</span>\'">';
   }
   $("thumbmodal").classList.add("show");
 }
@@ -7377,7 +7385,7 @@ async function doUnload(printerId,extruders){
   const st=$("unloadStatus");
   st.className="pstatus work"; st.textContent=t("fleet.modal.unload.status_unloading");
   try{
-    const r=await postJSON("/api/unload",{printer:printerId,extruders});
+    const r=await postJSON("api/unload",{printer:printerId,extruders});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     st.className="pstatus ok"; st.textContent=t("fleet.modal.unload.status_command_sent");
@@ -7565,7 +7573,7 @@ async function doApplyUnloadColor(){
     // call directly. The palette/custom "name" picked here is a client-side
     // display convenience only (nameForHex()); there's no printer-side field
     // for it, so it's never sent.
-    const r=await postJSON("/api/filament-color",{printer:SPOOL_MODAL_PRINTER,extruder:SPOOL_MODAL_EXT,hex:requestedHex});
+    const r=await postJSON("api/filament-color",{printer:SPOOL_MODAL_PRINTER,extruder:SPOOL_MODAL_EXT,hex:requestedHex});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
     loadFleet();
     closeUnload(); // saved — exit the color picker and the unload dialog together
@@ -7819,7 +7827,7 @@ function bulkheatApplyFooterState(){
 async function bulkheatOne(id, temp){
   bulkheatSetRowStatus(id, "work", "heating");
   try{
-    const r=await postJSON("/api/bedtemp",{printer:id,temp});
+    const r=await postJSON("api/bedtemp",{printer:id,temp});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     bulkheatSetRowStatus(id, "ok", temp===0 ? "off" : "set", temp===0?undefined:{temp});
   }catch(e){ bulkheatSetRowError(id, e.message); }
@@ -7912,7 +7920,7 @@ async function navigateBrowse(p){
   const list=$("browselist");
   list.innerHTML=`<div class="browse-empty">${esc(t("settings.browse.loading"))}</div>`;
   try{
-    const url=p?"/api/browse?path="+encodeURIComponent(p):"/api/browse";
+    const url=p?"api/browse?path="+encodeURIComponent(p):"api/browse";
     const d=await getJSON(url);
     $("browsepath").value=d.path||"";
     list.innerHTML="";
@@ -7926,7 +7934,7 @@ async function navigateBrowse(p){
       up.onclick=async()=>{
         list.innerHTML=`<div class="browse-empty">${esc(t("settings.browse.loading"))}</div>`;
         $("browsepath").value="";
-        const dr=await getJSON("/api/browse?drives=1");
+        const dr=await getJSON("api/browse?drives=1");
         list.innerHTML="";
         (dr.drives||[]).forEach(drv=>{
           const b=document.createElement("button"); b.className="browse-item";
@@ -7958,7 +7966,7 @@ async function doElecLookup(){
   $("elecApply").style.display="none";
   const btn=$("elecLookup"); btn.disabled=true;
   try{
-    const d=await getJSON("/api/electricity-rate?zip="+zip);
+    const d=await getJSON("api/electricity-rate?zip="+zip);
     if(d.error){ res.innerHTML=`<span style="color:var(--bad)">${esc(d.error)}</span>`+(d.location?`<br><span style="color:var(--ink-dim)">${esc(d.location)}</span>`:``); return; }
     res.innerHTML=`<b>${esc(d.location)}</b>${d.utility?`<br><span style="color:var(--ink-dim)">${esc(d.utility)}</span>`:``}<br>`+t("settings.electricity.rate_result",{cents:d.cents,rate:d.rate},{html:true});
     $("elecApply").style.display="";
@@ -7970,7 +7978,7 @@ async function doBedSet(printerId,temp){
   const st=$("bedmodalstatus");
   st.className="pstatus work"; st.textContent=temp?t("fleet.modal.bed.status_setting",{temp}):t("fleet.modal.bed.status_turning_off");
   try{
-    const r=await postJSON("/api/bedtemp",{printer:printerId,temp});
+    const r=await postJSON("api/bedtemp",{printer:printerId,temp});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     st.className="pstatus ok"; st.textContent=temp?t("fleet.modal.bed.status_set",{temp}):t("fleet.modal.bed.status_off");
     setTimeout(()=>{ closeBedModal(); loadFleet(); },1200);
@@ -8048,7 +8056,7 @@ async function openMaintModal(preselectIdx){
   const sel=$("maintPrinterSel");
   sel.innerHTML=`<option>${esc(t("maintenance.loading_printers"))}</option>`;
   $("maintDetail").style.display="none";
-  try{ MAINT_PRINTERS=await getJSON("/api/printers"); }catch{ MAINT_PRINTERS=[]; }
+  try{ MAINT_PRINTERS=await getJSON("api/printers"); }catch{ MAINT_PRINTERS=[]; }
   if(!MAINT_PRINTERS.length){
     sel.innerHTML=`<option>${esc(t("maintenance.no_printers_configured"))}</option>`;
     return;
@@ -8085,12 +8093,12 @@ async function loadMaintDetail(idx){
   updateNextScheduledPreview();
   MAINT_TOTAL_SEC=null;
   try{
-    const d=await getJSON("/api/printer-hours?printer="+idx);
+    const d=await getJSON("api/printer-hours?printer="+idx);
     MAINT_TOTAL_SEC=d.totalSeconds!=null?d.totalSeconds:null;
     $("maintHours").textContent=MAINT_TOTAL_SEC!=null?fmtHours(MAINT_TOTAL_SEC):t("maintenance.hours_unavailable");
   }catch{ $("maintHours").textContent=t("maintenance.hours_unavailable"); }
   try{
-    const d=await getJSON("/api/maintenance?printer="+idx);
+    const d=await getJSON("api/maintenance?printer="+idx);
     applyMaintDetailResponse(d);
   }catch{}
 }
@@ -8108,7 +8116,7 @@ async function toggleMaintenanceMode(){
   chk.disabled=true;
   st.className="pstatus work"; st.textContent=offline?t("maintenance.status_taking_offline"):t("maintenance.status_bringing_online");
   try{
-    const r=await postJSON("/api/maintenance-mode",{printer:MAINT_IDX,offline});
+    const r=await postJSON("api/maintenance-mode",{printer:MAINT_IDX,offline});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     st.className="pstatus ok"; st.textContent=d.maintenanceMode?t("maintenance.status_taken_offline"):t("maintenance.status_back_online");
@@ -8168,7 +8176,7 @@ async function saveMaintenance(){
   $("maintSave").disabled=true;
   st.className="pstatus work"; st.textContent=t("maintenance.status_saving");
   try{
-    const r=await postJSON("/api/maintenance",{printer:idx,entry});
+    const r=await postJSON("api/maintenance",{printer:idx,entry});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
     st.className="pstatus ok"; st.textContent=t("maintenance.status_saved");
@@ -8199,7 +8207,7 @@ function closePlate(){ $("platemodal").classList.remove("show"); if(PLATE_TIMER)
 async function refreshPlate(){
   if(PLATE_PRINTER===null) return;
   let d;
-  try{ d=await getJSON("/api/plate?printer="+PLATE_PRINTER); }catch(e){ return; }
+  try{ d=await getJSON("api/plate?printer="+PLATE_PRINTER); }catch(e){ return; }
   if(d.error){ $("platewrap").innerHTML='<div class="platenote">'+esc(d.error)+'</div>'; $("platelist").innerHTML=""; return; }
   PLATE_DATA=d;
   // Drop selections that disappeared or were skipped elsewhere.
@@ -8293,7 +8301,7 @@ async function doPlateSkip(){
   $("plateSkip").disabled=true;
   try{
     for(const n of names){
-      const r=await postJSON("/api/exclude",{printer:PLATE_PRINTER,name:n});
+      const r=await postJSON("api/exclude",{printer:PLATE_PRINTER,name:n});
       const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
     }
     st.className="pstatus ok"; st.textContent=tn("fleet.modal.plate.excluded_status",names.length);
@@ -8326,7 +8334,7 @@ function plateSVG(d,numberOf){
       `</g>`;
   }).join("");
   return `<svg viewBox="${-pad} ${-pad} ${BED+2*pad} ${BED+2*pad}" class="platesvg">`+
-    `<image href="/plate-bg.png" x="0" y="0" width="${BED}" height="${BED}" preserveAspectRatio="none"/>`+
+    `<image href="plate-bg.png" x="0" y="0" width="${BED}" height="${BED}" preserveAspectRatio="none"/>`+
     `${groups}</svg>`;
 }
 
@@ -8341,7 +8349,7 @@ $("gear").addEventListener("click",()=>{
   closeHealthPage();
   const open=$("setup").classList.toggle("show");
   document.querySelectorAll(".main > .sechead, .main > .jobcard, .main > .jobloading, #fleet-wrap").forEach(el=>el.style.display=open?"none":"");
-  $("gear").querySelector("img").src = open ? "/back.svg" : "/gear.svg";
+  $("gear").querySelector("img").src = open ? "back.svg" : "gear.svg";
   $("gear").title = open ? t("common.back") : t("settings.title");
   $("fleetSearch").style.display = open ? "none" : "";
   $("sortBtn").style.display = open ? "none" : "";
@@ -8445,7 +8453,7 @@ $("setUsersEnabled").addEventListener("change", async ()=>{
   const box=$("bootstrapAdmin");
   if(!$("setUsersEnabled").checked){ box.style.display="none"; return; }
   try{
-    const users=await getJSON("/api/users");
+    const users=await getJSON("api/users");
     if(users.length){ BOOTSTRAPPED_ADMIN=true; box.style.display="none"; return; }
   }catch{}
   BOOTSTRAPPED_ADMIN=false;
@@ -8458,7 +8466,7 @@ $("bootSubmit").addEventListener("click", async ()=>{
   const btn=$("bootSubmit"); btn.disabled=true;
   st.className="pstatus work"; st.textContent=t("settings.users.bootstrap_creating");
   try{
-    const r=await postJSON("/api/users",{firstName:$("bootFirst").value.trim(),lastName:$("bootLast").value.trim(),loginName,password,role:"admin",otpEnabled:false});
+    const r=await postJSON("api/users",{firstName:$("bootFirst").value.trim(),lastName:$("bootLast").value.trim(),loginName,password,role:"admin",otpEnabled:false});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(userErrorText(d,d.error||("HTTP "+r.status)));
     st.className="pstatus ok"; st.textContent=t("settings.users.bootstrap_created");
     BOOTSTRAPPED_ADMIN=true;
@@ -8471,7 +8479,7 @@ if($("dockerRestartBtn")) $("dockerRestartBtn").addEventListener("click", async 
   const st=$("dockerRestartStatus");
   st.className="pstatus work"; st.textContent=t("maintenance.docker_restarting_status");
   try{
-    const r=await postJSON("/api/restart",{});
+    const r=await postJSON("api/restart",{});
     const d=await r.json(); if(!r.ok||d.error) throw new Error(d.error||"HTTP "+r.status);
   }catch(e){ st.className="pstatus err"; st.textContent=e.message; }
 });
@@ -8576,7 +8584,7 @@ async function sendProviderTest(provider,btnId,statusId){
     if(provider==="ntfy") body.topic=$("ntfTopic").value.trim();
     else if(provider==="webhook"){ body.webhookUrl=secretFieldValue($("ntfWebhookUrlField")); body.webhookFormat=$("ntfWebhookFormat").value; }
     else { body.chatId=$("ntfChatId").value.trim(); body.botToken=secretFieldValue($("ntfBotTokenField")); }
-    const r=await postJSON("/api/notify-test",body);
+    const r=await postJSON("api/notify-test",body);
     const d=await r.json();
     if(!r.ok||d.error){
       let msg=d.error||("HTTP "+r.status);
@@ -8644,7 +8652,7 @@ async function doOtpTest(){
   }
   st.className="pstatus work"; st.textContent=t("settings.notif.sending_test");
   try{
-    const r=await postJSON("/api/otp-test",body);
+    const r=await postJSON("api/otp-test",body);
     const d=await r.json();
     if(!r.ok||d.error){
       const msg=(d.code&&OTP_TEST_ERROR_KEYS[d.code])?t(OTP_TEST_ERROR_KEYS[d.code]):(d.error||("HTTP "+r.status));
@@ -8688,7 +8696,7 @@ async function navigateFirmwarePicker(rel){
   list.innerHTML=`<div class="browse-empty">${esc(t("settings.browse.loading"))}</div>`;
   let d;
   try{
-    d=await getJSON("/api/firmware-files"+(rel?"?path="+encodeURIComponent(rel):""));
+    d=await getJSON("api/firmware-files"+(rel?"?path="+encodeURIComponent(rel):""));
   }catch{
     list.innerHTML=`<div class="browse-empty">${esc(t("settings.firmware.pick_failed"))}</div>`;
     return;
@@ -8754,7 +8762,7 @@ async function selectFirmware(file){
 // booleans.
 async function saveFirmwareOptions(){
   try{
-    await postJSON("/api/firmware-options",{
+    await postJSON("api/firmware-options",{
       skipCurrent: firmwareSkipCurrentEnabled(),
       verify: firmwareVerifyEnabled() });
   }catch{ /* a failed save is not worth interrupting the page for */ }
@@ -8763,7 +8771,7 @@ async function saveFirmwareOptions(){
 async function stopFirmwareQueue(){
   const btn=$("fwStop");
   if(btn) btn.disabled=true;
-  try{ await postJSON("/api/firmware-stop",{}); }
+  try{ await postJSON("api/firmware-stop",{}); }
   catch{ if(btn) btn.disabled=false; return; }
   pollFirmwareStatus();
 }
@@ -8773,7 +8781,7 @@ async function stopFirmwareQueue(){
 async function inspectSelectedFirmware(){
   if(!SELECTED_FIRMWARE) return null;
   let r;
-  try{ r=await fetch("/api/firmware-inspect?path="+encodeURIComponent(SELECTED_FIRMWARE.path)); }
+  try{ r=await fetch("api/firmware-inspect?path="+encodeURIComponent(SELECTED_FIRMWARE.path)); }
   catch(e){ return { hardFail:[e.message], warnings:[] }; }
   checkAuthFailure(r);
   // Branch on the CONTENT TYPE, not the status. A missing route and a missing
@@ -9521,7 +9529,7 @@ async function confirmFirmwareDeploy(){
   // the file, the version and every printer rather than asking "are you sure".
   openHoldConfirmDialog({
     mode:"hold",
-    iconSrc:"/estop-icon.svg",
+    iconSrc:"estop-icon.svg",
     title:tn("settings.firmware.confirm_title",picked.length,{n:picked.length}),
     subtitle:SELECTED_FIRMWARE.path,
     panelHtml:`<div class="hc-panel-file" title="${esc(SELECTED_FIRMWARE.path)}">${esc(SELECTED_FIRMWARE.name)}</div>`+
@@ -9577,7 +9585,7 @@ async function startFirmwareDeploy(printers){
   // reorder retarget the flash. Falls back to the index only for a row with no
   // id, which the server still accepts (see firmwareTargetFor).
   const refs=printers.map(i=>{ const row=FW_DATA.find(r=>r.id===i); return row&&row.pid?row.pid:i; });
-  const r=await postJSON("/api/firmware-deploy",{
+  const r=await postJSON("api/firmware-deploy",{
     printers:refs, path:SELECTED_FIRMWARE.path,
     skipCurrent: firmwareSkipCurrentEnabled(),
     verify: firmwareVerifyEnabled() });
@@ -9613,7 +9621,7 @@ function scheduleFirmwareStatusPoll(ms){
 }
 async function pollFirmwareStatus(){
   let d;
-  try{ d=await getJSON("/api/firmware-status"); }
+  try{ d=await getJSON("api/firmware-status"); }
   catch{ return; }              // a transient poll failure is not a deploy failure
   if(!d||!d.printers) return;
   const wasActive=FW_LAST_STATUS?Object.keys(FW_LAST_STATUS.printers||{}).some(k=>
@@ -9721,7 +9729,7 @@ async function refreshFirmwareRow(idx){
   if(!FW_ROWS.has(idx)) return;
   FW_REFRESH_INFLIGHT.add(idx);
   let fresh;
-  try{ fresh=await getJSON("/api/firmware?printer="+encodeURIComponent(idx)); }
+  try{ fresh=await getJSON("api/firmware?printer="+encodeURIComponent(idx)); }
   catch{ fresh=null; }
   FW_REFRESH_INFLIGHT.delete(idx);
   const tries=(FW_REFRESH_TRIES.get(idx)||0)+1;
@@ -9746,7 +9754,7 @@ async function loadFirmware(){
   if(btn) btn.disabled=true;
   st.className="pstatus work"; st.textContent=t("settings.firmware.reading");
   try{
-    const rows=await getJSON("/api/firmware");
+    const rows=await getJSON("api/firmware");
     FW_DATA=rows;
     FW_LOADED=true;
     FW_REFRESHED.clear();
@@ -9866,7 +9874,7 @@ async function loadRemoteAccessStatus(){
   if(RA_INFLIGHT) return;
   RA_INFLIGHT=true;
   try{
-    const [s, users]=await Promise.all([getJSON("/api/remote-access/status"), getJSON("/api/users")]);
+    const [s, users]=await Promise.all([getJSON("api/remote-access/status"), getJSON("api/users")]);
     // getJSON()'s checkAuthFailure() pops the login overlay on a 401 but
     // doesn't stop the (still-JSON) error body — e.g. {"error":"Login
     // required"} — from reaching here. Without this check, that object has
@@ -10003,7 +10011,7 @@ async function raSetEnabled(on){
   const st=$("raStatus"); st.className="pstatus work"; st.textContent=on?t("settings.remote_access.detail_starting"):t("settings.remote_access.stopping");
   $("raEnabled").disabled=true;
   try{
-    const r=await postJSON("/api/remote-access/"+(on?"enable":"disable"),{});
+    const r=await postJSON("api/remote-access/"+(on?"enable":"disable"),{});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(raErrorText(d,d.error||("HTTP "+r.status)));
     st.className="pstatus ok"; st.textContent="";
@@ -10015,7 +10023,7 @@ async function removeRemoteAccess(){
   const st=$("raStatus"); st.className="pstatus work"; st.textContent=t("settings.remote_access.removing");
   $("raRemoveBtn").disabled=true;
   try{
-    const r=await postJSON("/api/remote-access/remove",{});
+    const r=await postJSON("api/remote-access/remove",{});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(raErrorText(d,d.error||("HTTP "+r.status)));
     st.className="pstatus ok"; st.textContent="";
@@ -10026,7 +10034,7 @@ async function restartRemoteAccessTunnel(){
   const st=$("raStatus"); st.className="pstatus work"; st.textContent=t("settings.remote_access.restarting");
   $("raRestartBtn").disabled=true;
   try{
-    const r=await postJSON("/api/remote-access/restart",{});
+    const r=await postJSON("api/remote-access/restart",{});
     const d=await r.json();
     if(!r.ok||d.error) throw new Error(raErrorText(d,d.error||("HTTP "+r.status)));
     st.className="pstatus ok"; st.textContent="";
@@ -10037,7 +10045,7 @@ async function viewRemoteAccessLog(){
   const box=$("raLogView");
   if(box.style.display!=="none"){ box.style.display="none"; return; }
   try{
-    const d=await getJSON("/api/remote-access/log");
+    const d=await getJSON("api/remote-access/log");
     box.textContent=(d.lines||[]).join("\n")||t("settings.remote_access.no_log_output");
   }catch(e){ box.textContent=t("settings.remote_access.log_load_failed",{message:e.message}); }
   box.style.display="block";
@@ -10060,7 +10068,7 @@ function scheduleFirmwareFolderCheck(){
   el.className="settings-help"; el.textContent=t("settings.general.folder_checking");
   FIRMWARE_FOLDER_CHECK_TIMER=setTimeout(async()=>{
     try{
-      const r=await getJSON("/api/check-folder?path="+encodeURIComponent(p));
+      const r=await getJSON("api/check-folder?path="+encodeURIComponent(p));
       if(!r.ok){ el.className="settings-help err"; el.textContent=r.error||t("settings.general.folder_path_not_found"); return; }
       el.className="settings-help ok"; el.textContent=t("settings.files.firmware_folder_found");
     }catch{ el.className="settings-help err"; el.textContent=t("settings.general.folder_check_failed"); }
@@ -10076,7 +10084,7 @@ function scheduleFolderCheck(){
   el.className="settings-help"; el.textContent=t("settings.general.folder_checking");
   FOLDER_CHECK_TIMER=setTimeout(async()=>{
     try{
-      const r=await getJSON("/api/check-folder?path="+encodeURIComponent(p));
+      const r=await getJSON("api/check-folder?path="+encodeURIComponent(p));
       if(!r.ok){ el.className="settings-help err"; el.textContent=r.error||t("settings.general.folder_path_not_found"); return; }
       if(r.count>0){ el.className="settings-help ok"; el.textContent=tn("settings.general.folder_reachable_files",r.count); }
       else { el.className="settings-help warn"; el.textContent=t("settings.general.folder_reachable_no_files"); }
@@ -10219,7 +10227,7 @@ async function loadConfigUI(){
   await loadGroupsUI();
   await loadQueueManagementUI();
   try{
-    const c=await getJSON("/api/config");
+    const c=await getJSON("api/config");
     renderConfigLoadWarning(c);
     SYSTEM_DEFAULT_LOCALE=c.locale||"en";
     $("setFolder").value=c.gcodeFolder||"";
@@ -10330,7 +10338,7 @@ async function loadConfigUI(){
     // hide the warning banner above (it lives on tab-general, and showSetTab
     // below hides every other .set-panel) and invite saving an empty printer
     // list over the still-recoverable original.
-    if(!c.configured && !CONFIG_LOAD_FAILED && isAdmin()){ $("setup").classList.add("show"); showSetTab("printers"); $("gear").querySelector("img").src="/back.svg"; $("gear").title=t("common.back"); document.querySelectorAll(".main > .sechead, .main > .jobcard, .main > .jobloading, #fleet-wrap").forEach(el=>el.style.display="none"); $("fleetSearch").style.display="none"; $("sortBtn").style.display="none"; $("compactBtn").style.display="none"; if($("filesBtn")) $("filesBtn").style.display="none"; $("setupmsg").textContent=t("settings.onboarding_welcome"); if(!$("setPrinters").children.length) addPrinterRow("",""); }
+    if(!c.configured && !CONFIG_LOAD_FAILED && isAdmin()){ $("setup").classList.add("show"); showSetTab("printers"); $("gear").querySelector("img").src="back.svg"; $("gear").title=t("common.back"); document.querySelectorAll(".main > .sechead, .main > .jobcard, .main > .jobloading, #fleet-wrap").forEach(el=>el.style.display="none"); $("fleetSearch").style.display="none"; $("sortBtn").style.display="none"; $("compactBtn").style.display="none"; if($("filesBtn")) $("filesBtn").style.display="none"; $("setupmsg").textContent=t("settings.onboarding_welcome"); if(!$("setPrinters").children.length) addPrinterRow("",""); }
   }catch(e){}
 }
 // ---- Shared masked-secret control (printer API token, Telegram bot token) ----
@@ -11079,7 +11087,7 @@ function addPrinterRow(name,url,opts,autoOpen){
       // of Test is to check a printer before committing it. serial/
       // verificationCode are what FlashForge authenticates with; omitting
       // them made every FlashForge test fail with "SN is different".
-      const r=await (await postJSON("/api/test-connection",{
+      const r=await (await postJSON("api/test-connection",{
         url:u, connector:connectorEl.value, name:nameEl.value.trim(),
         serial:row.querySelector(".pserial").value.trim(),
         verificationCode:row.querySelector(".pvcode").value.trim()
@@ -11103,7 +11111,7 @@ function addPrinterRow(name,url,opts,autoOpen){
       if(!row.dataset.printerId){ st.className="pstatus pqueue-status err"; st.textContent=t("settings.printers.pool_save_no_id"); return; }
       st.className="pstatus pqueue-status work"; st.textContent=t("settings.printers.pool_saving");
       try{
-        const r=checkAuthFailure(await postJSON("/api/printer-pool",{printerId:row.dataset.printerId,printerPoolId:printerPoolEl.value||null}));
+        const r=checkAuthFailure(await postJSON("api/printer-pool",{printerId:row.dataset.printerId,printerPoolId:printerPoolEl.value||null}));
         const d=await r.json();
         // Refused outright for a monitor-only printer: put the picker back to
         // "no pool" so it does not keep showing an assignment that never saved.
@@ -11203,7 +11211,7 @@ async function loadAuditLogUI(reset){
   params.set("limit", String(LOG_LIMIT));
   params.set("offset", String(LOG_OFFSET));
   try{
-    const d=await getJSON("/api/audit-log?"+params.toString());
+    const d=await getJSON("api/audit-log?"+params.toString());
     LOG_LOADED=true;
     if(d.unavailable){
       LOG_UNAVAILABLE=true; LOG_CACHED_ROWS=[];
@@ -11237,7 +11245,7 @@ function refreshLogsDynamicText(){
 async function loadUsersUI(){
   $("setUsers").innerHTML="";
   try{
-    const users=await getJSON("/api/users");
+    const users=await getJSON("api/users");
     users.forEach(u=>addUserRow(u));
   }catch{}
 }
@@ -11340,7 +11348,7 @@ function addUserRow(u,autoOpen){
     if(!id){ row.remove(); return; }
     if(!confirm(t("settings.users.remove_confirm",{name:loginEl.value||""}))) return;
     try{
-      const r=checkAuthFailure(await fetch("/api/users/"+id,{method:"DELETE"}));
+      const r=checkAuthFailure(await fetch("api/users/"+id,{method:"DELETE"}));
       const d=await r.json(); if(!r.ok||d.error) throw new Error(userErrorText(d,d.error||("HTTP "+r.status)));
       row.remove();
     }catch(e){ alert(e.message); }
@@ -11374,8 +11382,8 @@ function addUserRow(u,autoOpen){
     st.className="pstatus usave-status work"; st.textContent=t("settings.dirty_bar.saving");
     try{
       const r=checkAuthFailure(id
-        ? await fetch("/api/users/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
-        : await fetch("/api/users",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));
+        ? await fetch("api/users/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})
+        : await fetch("api/users",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}));
       const d=await r.json(); if(!r.ok||d.error) throw new Error(userErrorText(d,d.error||("HTTP "+r.status)));
       row.dataset.userId=d.user.id;
       row.dataset.groupIds=JSON.stringify(d.user.groupIds||[]);
@@ -11428,7 +11436,7 @@ function renderGroupsManageList(){
       const name=inp.value.trim();
       if(!name || name===orig) { inp.value=name||orig; return; }
       try{
-        const r=await fetch("/api/groups/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
+        const r=await fetch("api/groups/"+id,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({name})});
         const d=await r.json(); if(!r.ok||d.error) throw new Error(userErrorText(d,d.error||("HTTP "+r.status)));
         const kept=checkedGroupIds();
         await loadGroupsUI();
@@ -11443,7 +11451,7 @@ function renderGroupsManageList(){
       const g=GROUPS.find(x=>x.id===id);
       if(!confirm(t("settings.users.delete_group_confirm",{name:g?g.name:""}))) return;
       try{
-        const r=await fetch("/api/groups/"+id,{method:"DELETE"});
+        const r=await fetch("api/groups/"+id,{method:"DELETE"});
         const d=await r.json(); if(!r.ok||d.error) throw new Error(userErrorText(d,d.error||("HTTP "+r.status)));
         const kept=checkedGroupIds().filter(gid=>gid!==id);
         await loadGroupsUI();
@@ -11507,7 +11515,7 @@ function gatherPrinters(){
 async function runDiscover(subnet){
   const w=$("discwrap"); w.innerHTML='<div class="discrow"><span class="di">'+esc(t("settings.printers.discover_scanning",{subnet:subnet?subnet:t("settings.printers.discover_local_network_label")}))+'</span></div>';
   try{
-    const url=subnet?"/api/discover?subnet="+encodeURIComponent(subnet):"/api/discover";
+    const url=subnet?"api/discover?subnet="+encodeURIComponent(subnet):"api/discover";
     const d=await getJSON(url);
     if(d.error){ w.innerHTML='<div class="discrow"><span class="di" style="color:var(--bad)">'+esc(d.error)+'</span></div>'; return; }
     if(!d.found.length){ w.innerHTML='<div class="discrow"><span class="di">'+esc(t("settings.printers.discover_none_found",{subnets:(d.subnets||[]).join(", ")}))+'</span></div>'; return; }
@@ -11626,7 +11634,7 @@ async function saveConfig(){
     await Promise.all(needProbe.map(async r=>{
       const url=rowAddressUrl(r);
       try{
-        const d=await getJSON("/api/probe-printer?url="+encodeURIComponent(url));
+        const d=await getJSON("api/probe-printer?url="+encodeURIComponent(url));
         const nameEl=r.querySelector(".pname"), serialEl=r.querySelector(".pserial");
         if(!nameEl.value.trim()&&d.name) nameEl.value=d.name;
         if(!serialEl.value.trim()&&d.serial) serialEl.value=d.serial;
@@ -11674,7 +11682,7 @@ async function saveConfig(){
     },
     printers:gatherPrinters() };
   try{
-    const c=await (await postJSON("/api/config",body)).json();
+    const c=await (await postJSON("api/config",body)).json();
     if(c.error) throw new Error(c.error);
     // The response already reflects server.js's post-save loadConfig() reload
 
