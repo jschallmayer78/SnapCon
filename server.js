@@ -23,6 +23,9 @@ const connHttp = require("./connectors/http-utils");
 // firmwareDeploy.
 const u1Firmware = require("./connectors/snapmaker-u1-firmware");
 const firmwareImage = require("./connectors/firmwareImage");
+// Connectors that only watch their printers (capabilities.control === false,
+// Bambu Lab today) — see refuseMonitorOnly() below for where it is enforced.
+const { isMonitorOnly, monitorOnlyMessage, MONITOR_ONLY_CODE } = require("./connectors/monitorOnly");
 const { createRemoteAccessService } = require("./remote-access/RemoteAccessService");
 const { createAuditLog } = require("./audit/AuditLog");
 const { createSyncEngine } = require("./sync/SyncEngine");
@@ -49,7 +52,15 @@ process.on("unhandledRejection", (reason) => {
 // live NEXT TO THE EXE instead. Bundled assets (public/, parser.js) stay on
 // __dirname, which pkg maps into the snapshot.
 const IS_PKG = typeof process.pkg !== "undefined";
-const BASE_DIR = IS_PKG ? path.dirname(process.execPath) : __dirname;
+// SNAPCON_DATA_DIR (optional) moves every writable file — config.json,
+// users.json, locales/, the *-data folders and, by default, gcode/ — into one
+// directory. The Home Assistant add-on points it at its persistent /data, and
+// a Docker setup can use it to keep all state in a single volume. Unset, the
+// layout is exactly as before (next to server.js / the executable).
+const BASE_DIR = process.env.SNAPCON_DATA_DIR
+  ? path.resolve(process.env.SNAPCON_DATA_DIR)
+  : (IS_PKG ? path.dirname(process.execPath) : __dirname);
+if (process.env.SNAPCON_DATA_DIR) { try { fs.mkdirSync(BASE_DIR, { recursive: true }); } catch {} }
 const ASSET_DIR = __dirname;
 
 // /.dockerenv is created by the Docker Engine in every Linux container —
@@ -1291,11 +1302,31 @@ const wantsAnyPref = prefs => !!(prefs && (prefs.autoLevel || prefs.flowCalibrat
 // flowCalibrate:true by default and the caller sent no override for it.
 const printerHasAnyDefaultPref = p => !!(p.autoLevel || p.flowCalibrate || p.timelapse);
 
+// ---- Monitor-only printers ----
+// A connector that declares capabilities.control === false (connectors/
+// monitorOnly.js) is read-only BY DESIGN: SnapCon shows its status and never
+// commands it. The UI hides every control for such a printer, and this is the
+// server half of the same rule — every route that would change what a printer
+// does calls refuseMonitorOnly() right after its visibility check, and queue
+// dispatch/auto-balance skip these printers outright. One predicate, so a
+// connector can never be half read-only. The connector's own control stubs
+// throw too; this guard exists so a request gets a clear 409 before any of
+// the route's side effects (staging a file, queueing, audit rows) happen.
+function printerIsMonitorOnly(p) {
+  return !!p && isMonitorOnly(getCapabilities(p.connector, p));
+}
+function refuseMonitorOnly(p, res) {
+  if (!printerIsMonitorOnly(p)) return false;
+  res.status(409).json({ error: monitorOnlyMessage(p.name), code: MONITOR_ONLY_CODE });
+  return true;
+}
+
 app.post("/api/print", requireRegular, async (req, res) => {
   const { file, printer, start, map, prefs } = req.body || {};
   const p = PRINTERS[printer];
   if (!p) return res.status(400).json({ error: "Unknown printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+  if (refuseMonitorOnly(p, res)) return;
   if (p.maintenanceMode) return res.status(409).json({ error: p.name + " is in maintenance mode — take it off maintenance before printing." });
   const fp = safePath(file);
   if (!fp || !fs.existsSync(fp)) return res.status(404).json({ error: "File not found" });
@@ -1491,6 +1522,7 @@ app.post("/api/printfile", requireRegular, (req, res) => {
   const p = PRINTERS[printer];
   if (!p) return res.status(400).json({ error: "Unknown printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+  if (refuseMonitorOnly(p, res)) return;
   if (p.maintenanceMode) return res.status(409).json({ error: p.name + " is in maintenance mode — take it off maintenance before printing." });
   if (!filename || /["\r\n]/.test(filename)) return res.status(400).json({ error: "Bad filename" });
 
@@ -1523,6 +1555,7 @@ app.post("/api/printctl", requireRegular, async (req, res) => {
   const p = PRINTERS[printer];
   if (!p) return res.status(400).json({ error: "Unknown printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+  if (refuseMonitorOnly(p, res)) return;
   const c = getConnector(p.connector);
   const method = { pause: c.pause, resume: c.resume, cancel: c.cancel, eject: c.eject, estop: c.estop }[action];
   if (!method) return res.status(400).json({ error: "Bad action" });
@@ -1559,6 +1592,7 @@ app.post("/api/exclude", requireRegular, async (req, res) => {
   const p = PRINTERS[printer];
   if (!p) return res.status(400).json({ error: "Unknown printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+  if (refuseMonitorOnly(p, res)) return;
   if (!name || /["\r\n]/.test(name)) return res.status(400).json({ error: "Bad object name" });
   const c = getConnector(p.connector);
   if (!c.excludeObject) return res.status(400).json({ error: p.name + " does not support excluding objects" });
@@ -1859,6 +1893,9 @@ function redactQueueStateForResponse(state) {
 async function attemptQueueDispatch(printerId) {
   const p = PRINTERS.find(pr => pr.id === printerId);
   if (!p || !p.printerPoolId) return;
+  // Never dispatch to a monitor-only printer, even one left in a pool by a
+  // hand-edited config or a connector change (see refuseMonitorOnly).
+  if (printerIsMonitorOnly(p)) return;
   // Interlock with the OLD single-slot mechanism (round-3 issue #7): a
   // printer the legacy pendingLoad/queuedFile flow still owns must finish
   // resolving under that flow first — both mechanisms racing to claim the
@@ -1938,7 +1975,7 @@ setInterval(() => {
   const balancePools = (CFG.printerPools || []).filter(pool => pool.autoBalance);
   if (balancePools.length) {
     const groups = balancePools
-      .map(pool => ({ printers: PRINTERS.filter(p => p.printerPoolId === pool.id).map(p => ({ id: p.id, connector: p.connector })) }))
+      .map(pool => ({ printers: PRINTERS.filter(p => p.printerPoolId === pool.id && !printerIsMonitorOnly(p)).map(p => ({ id: p.id, connector: p.connector })) }))
       .filter(g => g.printers.length > 1);
     if (groups.length) {
       const result = queueStore.applyBulkIntent(current => QueueEngine.computeAutoBalanceMoves(current, groups));
@@ -2060,6 +2097,7 @@ app.post("/api/notify-load", rawGcodeBody, async (req, res) => {
     const idx = findPrinterIndex(printer);
     if (idx === -1 || !printerVisibleTo(req.user, PRINTERS[idx])) return res.status(400).json({ error: "Unknown printer: " + printer });
     const p = PRINTERS[idx];
+    if (refuseMonitorOnly(p, res)) return;
     const name = outputname || path.basename(filename || "upload.gcode");
     fs.mkdirSync(NOTIFY_TMP_DIR, { recursive: true });
     const safeName = name.replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -2092,6 +2130,7 @@ app.post("/api/notify-load", rawGcodeBody, async (req, res) => {
   const idx = findPrinterIndex(printer);
   if (idx === -1) return res.status(400).json({ error: "Unknown printer: " + printer });
   const p = PRINTERS[idx];
+  if (refuseMonitorOnly(p, res)) return;
   // outputname is used exactly as given — it's what the file is uploaded and
   // displayed as. The file actually read off disk is always absFile.
   const name = outputname ? outputname.trim() : path.basename(absFile);
@@ -2171,6 +2210,57 @@ app.get("/api/snapshot", requireAuth, async (req, res) => {
   }
 });
 
+// ---- Live camera as a fragmented-MP4 byte stream ----
+// For connectors whose camera is a video stream the browser cannot open
+// itself (Bambu Lab: RTSPS). The connector relays it (one upstream session per
+// printer, shared by every viewer) and this route hands one viewer its copy.
+// The page plays it through Media Source Extensions; X-SnapCon-Codec tells it
+// which SourceBuffer to create before the first byte arrives. The response
+// never ends on its own — it stops when the viewer goes away or the camera
+// does. A viewer that falls far behind is dropped by the relay instead of
+// buffering the printer's video in SnapCon's memory.
+app.get("/api/camera-stream", requireAuth, async (req, res) => {
+  const p = PRINTERS[parseInt(req.query.printer, 10)];
+  if (!p || !printerVisibleTo(req.user, p)) return res.status(400).json({ error: "Unknown printer" });
+  const c = getConnector(p.connector);
+  if (!c.openCameraStream || !getCapabilities(p.connector, p).cameraStream) return res.status(400).json({ error: p.name + " has no live camera stream" });
+  let sub = null, ended = false;
+  const finish = () => {
+    if (ended) return;
+    ended = true;
+    if (sub) sub.unsubscribe();
+    if (!res.writableEnded) res.end();
+  };
+  const headersFor = (codec) => ({
+    "Content-Type": "video/mp4",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-SnapCon-Codec": codec || ""
+  });
+  let pendingWrites = [];
+  const viewer = {
+    // Bytes can arrive (init segment + buffered GOP) before openCameraStream
+    // resolves with the codec for the headers — hold them until then.
+    write: (buf) => { if (ended) return; if (pendingWrites) pendingWrites.push(buf); else res.write(buf); },
+    end: () => finish(),
+    backlog: () => res.writableLength || 0
+  };
+  req.on("close", finish);
+  try {
+    sub = await c.openCameraStream(p, viewer);
+  } catch (e) {
+    pendingWrites = null;
+    if (!ended) res.status(e.status || 502).json({ error: e.message });
+    ended = true;
+    return;
+  }
+  if (ended) { sub.unsubscribe(); return; }
+  res.writeHead(200, headersFor(sub.codec));
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+  const queued = pendingWrites; pendingWrites = null;
+  for (const b of queued) res.write(b);
+});
+
 // ---- Thumbnail proxy: fetch gcode thumbnail from Moonraker ----
 app.get("/api/thumbnail", requireAuth, async (req, res) => {
   const p = PRINTERS[req.query.printer];
@@ -2196,6 +2286,7 @@ app.post("/api/unload", requireRegular, async (req, res) => {
   const p = PRINTERS[printer];
   if (!p) return res.status(400).json({ error: "Unknown printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+  if (refuseMonitorOnly(p, res)) return;
   if (!Array.isArray(extruders) || !extruders.length) return res.status(400).json({ error: "No extruders specified" });
   const c = getConnector(p.connector);
   if (!c.unloadFilament) return res.status(400).json({ error: p.name + " does not support filament unload" });
@@ -2214,6 +2305,7 @@ app.post("/api/filament-color", requireRegular, async (req, res) => {
   const p = PRINTERS[printer];
   if (!p) return res.status(400).json({ error: "Unknown printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+  if (refuseMonitorOnly(p, res)) return;
   if (typeof extruder !== "number" || extruder < 0) return res.status(400).json({ error: "Invalid extruder" });
   if (!/^#[0-9a-fA-F]{6}$/.test(String(hex || ""))) return res.status(400).json({ error: "Invalid color" });
   const c = getConnector(p.connector);
@@ -2236,6 +2328,7 @@ app.post("/api/bedtemp", requireRegular, async (req, res) => {
   const p = PRINTERS[printer];
   if (!p) return res.status(400).json({ error: "Unknown printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+  if (refuseMonitorOnly(p, res)) return;
   const t = Number(temp);
   if (!Number.isFinite(t) || t < 0 || t > 120) return res.status(400).json({ error: "Temp must be 0–120 °C" });
   try {
@@ -3082,6 +3175,31 @@ async function buildPrinterRecord(p, existing) {
       } catch { /* unreachable right now — leave cameraChecked unset, retried next save */ }
     }
   }
+  // Bambu Lab: the model is read straight off the serial number's prefix
+  // (connectors/bambulab-h2.js modelFromSerial) — no network call — and kept
+  // until the serial changes, with the same first-identification tagging as
+  // the Creality detection above.
+  if (o.connector === "bambulab-h2") {
+    // Reused only from a record that was ALREADY this connector with this
+    // serial — a printer switched over from another connector must not carry
+    // that connector's detected model across.
+    const sameMachine = !!existing && existing.connector === o.connector && existing.serial === o.serial;
+    if (sameMachine && existing.modelChecked) {
+      o.modelChecked = true;
+      if (existing.model) o.model = existing.model;
+    } else {
+      const model = getConnector(o.connector).modelFromSerial(o.serial);
+      if (model) {
+        o.model = model;
+        o.modelChecked = true;
+        // Tagged here, on this first identification for this connector and
+        // serial — the generic rule below keys on existing.modelChecked, which
+        // a printer switched over from Creality already carries.
+        const tags = o.tags || [];
+        if (!tags.some(t => t.toLowerCase() === model.toLowerCase())) o.tags = [...tags, model];
+      }
+    }
+  }
   // A connector that covers several machines tags the printer with the model
   // it detected, so a mixed fleet can be filtered and told apart at a glance.
   // Added only on the save that FIRST identifies the model (o.modelChecked
@@ -3805,6 +3923,9 @@ app.post("/api/queue-management/enable", requireAdmin, (req, res) => {
     // need updating together (design doc A3).
     let changed = false;
     for (const p of PRINTERS) {
+      // A monitor-only printer can never be dispatched to, so it is not
+      // managed by the queue at all (see refuseMonitorOnly).
+      if (printerIsMonitorOnly(p)) continue;
       if (!p.printerPoolId) { p.printerPoolId = PRINTER_POOL_DEFAULT_MANUAL_ID; changed = true; }
       if (queueStore.getPrinterState(p.id).queueState === "unmanaged") queueStore.assignPool(p.id);
     }
@@ -3895,6 +4016,9 @@ app.post("/api/printer-pool", requireAdmin, (req, res) => {
   // current caller that looks at `code`, to render a translated message
   // instead of this raw English fallback.
   if (!p) return res.status(400).json({ error: "Unknown printer", code: "unknown_printer" });
+  // Assigning a pool is what lets the queue dispatch prints to a printer, so a
+  // monitor-only one is refused here; removing it from a pool stays allowed.
+  if (printerPoolId && refuseMonitorOnly(p, res)) return;
   const qs = queueStore.getPrinterState(p.id);
   if (qs.queueState !== "idle" && qs.queueState !== "unmanaged") return res.status(409).json({ error: "This printer's queue must be idle before changing its pool", code: "queue_not_idle" });
   if (qs.queue.length) return res.status(409).json({ error: "Clear this printer's queue before changing its pool", code: "queue_not_empty" });
@@ -3925,6 +4049,7 @@ app.post("/api/queue/:printerId/items", requireRegular, (req, res) => {
   const p = printerById(req.params.printerId);
   if (!p) return res.status(400).json({ error: "Unknown printer", code: "unknown_printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer", code: "no_printer_access" });
+  if (refuseMonitorOnly(p, res)) return;
   if (!p.printerPoolId) return res.status(400).json({ error: "This printer has no Printer Pool assigned" });
   const b = req.body || {};
   const files = Array.isArray(b.files) ? b.files : [];
@@ -4073,7 +4198,11 @@ app.post("/api/queue/:printerId/clear", requireRegular, async (req, res) => {
   if (!p) return res.status(400).json({ error: "Unknown printer", code: "unknown_printer" });
   if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer", code: "no_printer_access" });
   const qs = queueStore.getPrinterState(p.id);
-  const wasPrinting = qs.queueState === "dispatching" || qs.queueState === "printing";
+  // A monitor-only printer can only still hold queue state from before its
+  // connector was switched; SnapCon cannot cancel on it, and refusing the
+  // Clear would leave that queue stuck for good — so the queue is cleared and
+  // the print, if any, left to the operator.
+  const wasPrinting = (qs.queueState === "dispatching" || qs.queueState === "printing") && !printerIsMonitorOnly(p);
   if (wasPrinting) {
     try { await getConnector(p.connector).cancel(p); }
     catch (e) { return res.status(502).json({ error: "Could not cancel the current print: " + e.message }); }
@@ -4159,7 +4288,7 @@ app.post("/api/queue/send", requireRegular, (req, res) => {
   if (!files.length) return res.status(400).json({ error: "No files given" });
   const pool = (CFG.printerPools || []).find(x => x.id === poolId);
   if (!pool) return res.status(400).json({ error: "Unknown printer pool", code: "unknown_pool" });
-  const targetPrinters = PRINTERS.filter(p => p.printerPoolId === poolId && printerVisibleTo(req.user, p));
+  const targetPrinters = PRINTERS.filter(p => p.printerPoolId === poolId && printerVisibleTo(req.user, p) && !printerIsMonitorOnly(p));
   if (!targetPrinters.length) return res.status(400).json({ error: "No printers available in this pool" });
 
   // Validate + resolve every file BEFORE computing or writing anything —
@@ -4317,7 +4446,10 @@ function eventMessage(ev, st) {
     if (st.bed) lines.push(`Bed: ${st.bed.temp}/${st.bed.target}°C`);
     if (st.hotend) lines.push(`Hotend: ${st.hotend.temp}/${st.hotend.target}°C`);
     if (st.layer) lines.push(`Layer: ${st.layer.current}/${st.layer.total}`);
-    const rem = (st.progress > 0 && st.elapsed > 0) ? st.elapsed * (1 / st.progress - 1) : null;
+    // A printer-reported countdown (Bambu Lab) wins over extrapolating from
+    // elapsed/progress, same rule as the dashboard's fmtRemaining().
+    const rem = (typeof st.remaining === "number" && Number.isFinite(st.remaining)) ? st.remaining
+      : (st.progress > 0 && st.elapsed > 0) ? st.elapsed * (1 / st.progress - 1) : null;
     lines.push("Elapsed: " + fmtDur(st.elapsed) + (rem != null ? "  ·  Remaining: " + fmtDur(rem) : ""));
   }
   return lines.join("\n");

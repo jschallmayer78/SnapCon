@@ -458,3 +458,32 @@ upgrading is recommended for anyone running SnapCon where more than one person c
   stopped responding could leave the most safety-critical action waiting indefinitely. Commands now
   fail in reasonable time, with deliberately longer allowances for the few operations that really do
   take minutes.
+
+Unreleased
+
+### Bambu Lab H2 series, monitoring only
+Bambu Lab H2D, H2D Pro, H2S and H2C printers can now be added alongside the rest of the farm with
+the new **Bambu Lab H2D / H2S / H2C (monitoring only)** connector - IP address, serial number and
+the printer's 8-character LAN access code are all it needs. Status, progress, the printer's own
+remaining-time estimate, layers, bed and active-nozzle temperatures and every AMS, AMS HT and
+external-spool slot appear on the card and in the list view, and notifications work as for any
+other printer. LAN Only Mode and Developer Mode do not need to be enabled.
+
+SnapCon never commands these printers. The card and list view show a *Monitoring only* note where
+the controls would be, and the server refuses print, pause/resume/cancel, E-Stop, bed-temperature,
+Printer Pool and queue requests for them. The connection is verified against Bambu Lab's own
+certificate authority and the printer's serial number before the access code is sent.
+
+- **Live camera.** With *LAN Only Liveview* switched on at the printer, the card gets a camera
+  button, Camera View shows the printer live and the camera window plays it live. SnapCon relays the
+  printer's RTSPS stream as fragmented MP4 that the browser decodes itself - no plugin, and it works
+  on a plain http:// LAN address. One camera session per printer, only while someone watches.
+  Notification pictures additionally need ffmpeg on the SnapCon host.
+- **Job preview.** The plate image is read from the job's .3mf on the printer (FTPS, ranged reads of
+  just the image). On H2 firmware this needs *Store sent files on external storage* with a USB drive
+  or SD card in the printer.
+- **Printer-reported remaining time.** A connector can now report the printer's own countdown,
+  which the card, list view and queue view prefer over estimating it from elapsed time and progress.
+- **Named filament lanes.** A connector can label its slots the way the printer does (A1, HT1,
+  Ext-L) instead of T1..Tn.
+
