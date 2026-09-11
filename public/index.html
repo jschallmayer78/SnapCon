@@ -5,7 +5,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>SnapCon</title>
-<link rel="preload" href="/fonts/JetBrainsMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/JetBrainsMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
 <script>
 (function(){
   var stored=null;
@@ -15,17 +15,17 @@
   document.documentElement.setAttribute("data-theme",theme);
 })();
 </script>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
 <a href="#main" class="skip-link" data-i18n="common.skip_to_main_content">Skip to main content</a>
 <div class="splash" id="splash">
-  <img src="/snapcon-icon-large.svg" alt="SnapCon">
+  <img src="snapcon-icon-large.svg" alt="SnapCon">
   <div class="splash-sub" id="splashsub" data-i18n="global.splash.connecting">connecting to printers…</div>
 </div>
 <div class="login-overlay" id="loginOverlay" style="display:none">
   <div class="login-box">
-    <img src="/snapcon-icon-large.svg" alt="SnapCon" class="login-logo">
+    <img src="snapcon-icon-large.svg" alt="SnapCon" class="login-logo">
     <div id="loginStep1">
       <label class="fl" for="loginName" data-i18n="auth.login_name_label">Login name</label>
       <input class="field" id="loginName" autocomplete="username" spellcheck="false">
@@ -56,7 +56,7 @@
   <aside class="side">
     <div class="head">
       <div class="sort-wrap">
-        <button class="refresh icon-btn" id="fileSortBtn" data-i18n-title="global.file_sort.title_new" title="Sort: Newest"><img src="/file-sort.svg" class="side-icon" data-i18n-alt="global.topbar.sort_alt" alt="Sort"></button>
+        <button class="refresh icon-btn" id="fileSortBtn" data-i18n-title="global.file_sort.title_new" title="Sort: Newest"><img src="file-sort.svg" class="side-icon" data-i18n-alt="global.topbar.sort_alt" alt="Sort"></button>
         <div class="sort-menu left" id="fileSortMenu">
           <button class="sort-opt" data-fsort="new"><span class="sort-check" id="fsc-new"></span><span data-i18n="global.file_sort.option_new">Newest</span></button>
           <button class="sort-opt" data-fsort="old"><span class="sort-check" id="fsc-old"></span><span data-i18n="global.file_sort.option_old">Oldest</span></button>
@@ -67,9 +67,9 @@
         </div>
       </div>
       <div class="head-btns">
-        <button class="refresh icon-btn" id="newFolderBtn" data-i18n-title="files.new_folder_title" title="Create a new folder here"><img src="/new-folder.svg" class="side-icon" data-i18n-alt="files.new_folder_alt" alt="New Folder"></button>
-        <button class="refresh icon-btn" id="uploadFilesBtn" data-i18n-title="files.upload_title" title="Upload files from this computer"><img src="/upload-file.svg" class="side-icon" data-i18n-alt="files.upload_alt" alt="Upload"></button>
-        <button class="refresh icon-btn" id="refresh" data-i18n-title="common.refresh" title="Refresh"><img src="/refresh-icon.svg" class="side-icon" data-i18n-alt="common.refresh" alt="Refresh"></button>
+        <button class="refresh icon-btn" id="newFolderBtn" data-i18n-title="files.new_folder_title" title="Create a new folder here"><img src="new-folder.svg" class="side-icon" data-i18n-alt="files.new_folder_alt" alt="New Folder"></button>
+        <button class="refresh icon-btn" id="uploadFilesBtn" data-i18n-title="files.upload_title" title="Upload files from this computer"><img src="upload-file.svg" class="side-icon" data-i18n-alt="files.upload_alt" alt="Upload"></button>
+        <button class="refresh icon-btn" id="refresh" data-i18n-title="common.refresh" title="Refresh"><img src="refresh-icon.svg" class="side-icon" data-i18n-alt="common.refresh" alt="Refresh"></button>
       </div>
     </div>
     <div class="folderline" id="folderline">…</div>
@@ -86,15 +86,15 @@
   <main class="main" id="main" tabindex="-1">
     <div class="topbar">
       <div class="topbar-brand">
-        <img src="/snapcon-icon-small.svg" alt="SnapCon">
+        <img src="snapcon-icon-small.svg" alt="SnapCon">
         <span class="topbar-brand-name">SnapCon<span class="topbar-view-label" id="topbarViewLabel"></span></span>
         <span class="vbadge" id="vbadge"></span>
       </div>
       <span class="topbar-sitename" id="topbarSiteName" style="display:none"></span>
       <input id="fleetSearch" class="fleet-search" data-i18n-placeholder="global.topbar.fleet_search_placeholder" placeholder="Search printers…" data-i18n-aria-label="global.topbar.fleet_search_aria" aria-label="Search printers" autocomplete="off">
-      <button class="gear" id="filesBtn" data-i18n-title="global.topbar.files_show_title" title="Show file list"><img src="/folder.svg" class="topbar-icon" data-i18n-alt="global.topbar.files_alt" alt="Files"></button>
+      <button class="gear" id="filesBtn" data-i18n-title="global.topbar.files_show_title" title="Show file list"><img src="folder.svg" class="topbar-icon" data-i18n-alt="global.topbar.files_alt" alt="Files"></button>
       <div class="sort-wrap">
-        <button class="gear" id="sortBtn" data-i18n-title="global.topbar.sort_button_title" title="Sort printers"><img src="/sort.svg" class="topbar-icon" data-i18n-alt="global.topbar.sort_alt" alt="Sort"></button>
+        <button class="gear" id="sortBtn" data-i18n-title="global.topbar.sort_button_title" title="Sort printers"><img src="sort.svg" class="topbar-icon" data-i18n-alt="global.topbar.sort_alt" alt="Sort"></button>
         <div class="sort-menu" id="sortMenu">
           <button class="sort-opt" data-sort="none"><span class="sort-check" id="sc-none"></span><span data-i18n="global.sort.option_none">No sort</span></button>
           <button class="sort-opt" data-sort="status"><span class="sort-check" id="sc-status"></span><span data-i18n="global.sort.option_status">By status</span></button>
@@ -102,18 +102,18 @@
           <button class="sort-opt" data-sort="name"><span class="sort-check" id="sc-name"></span><span data-i18n="global.sort.option_name">By name</span></button>
         </div>
       </div>
-      <button class="gear" id="compactBtn" data-i18n-title="global.topbar.view_title_compact" title="Switch to compact view"><img src="/view-compact.svg" class="topbar-icon" data-i18n-alt="global.topbar.compact_alt" alt="Compact"></button>
-      <button class="gear" id="bulkHeatBtn" data-i18n-title="global.topbar.bulk_heat_title" title="Heat multiple printers"><img src="/preheat-icon.svg" class="topbar-icon" data-i18n-alt="global.topbar.heat_alt" alt="Heat"></button>
-      <button class="gear" id="healthBtn" data-i18n-title="global.topbar.health_title" title="Printer health" data-i18n-aria-label="global.topbar.health_title" aria-label="Printer health"><img src="/health.svg" class="topbar-icon" data-i18n-alt="global.topbar.health_title" alt="Printer health"><span class="health-badge" id="healthBadge" style="display:none"></span></button>
+      <button class="gear" id="compactBtn" data-i18n-title="global.topbar.view_title_compact" title="Switch to compact view"><img src="view-compact.svg" class="topbar-icon" data-i18n-alt="global.topbar.compact_alt" alt="Compact"></button>
+      <button class="gear" id="bulkHeatBtn" data-i18n-title="global.topbar.bulk_heat_title" title="Heat multiple printers"><img src="preheat-icon.svg" class="topbar-icon" data-i18n-alt="global.topbar.heat_alt" alt="Heat"></button>
+      <button class="gear" id="healthBtn" data-i18n-title="global.topbar.health_title" title="Printer health" data-i18n-aria-label="global.topbar.health_title" aria-label="Printer health"><img src="health.svg" class="topbar-icon" data-i18n-alt="global.topbar.health_title" alt="Printer health"><span class="health-badge" id="healthBadge" style="display:none"></span></button>
       <!-- Shown only when Queue Management is enabled. -->
-      <button class="gear" id="queueBtn" data-i18n-title="settings.tabs.queue" title="Queue Management" style="display:none"><img src="/queue.svg" class="topbar-icon" data-i18n-alt="settings.tabs.queue" alt="Queue Management"></button>
+      <button class="gear" id="queueBtn" data-i18n-title="settings.tabs.queue" title="Queue Management" style="display:none"><img src="queue.svg" class="topbar-icon" data-i18n-alt="settings.tabs.queue" alt="Queue Management"></button>
       <!-- Static state = dark theme active, so the icon offers the switch TO light (see syncThemeButton, which corrects it on load). -->
-      <button class="gear" id="themeBtn" title="Switch to light theme" aria-pressed="false"><img src="/sun.svg" class="topbar-icon" id="themeBtnIcon" alt="Light theme"></button>
-      <button class="gear" id="gear" data-i18n-title="settings.title" title="Settings"><img src="/gear.svg" class="topbar-icon" data-i18n-alt="settings.title" alt="Settings"></button>
+      <button class="gear" id="themeBtn" title="Switch to light theme" aria-pressed="false"><img src="sun.svg" class="topbar-icon" id="themeBtnIcon" alt="Light theme"></button>
+      <button class="gear" id="gear" data-i18n-title="settings.title" title="Settings"><img src="gear.svg" class="topbar-icon" data-i18n-alt="settings.title" alt="Settings"></button>
       <span class="topbar-clock" id="topbarClock"></span>
       <div class="user-badge" id="userBadge" style="display:none">
         <select class="topbar-locale-select" id="topbarLocale" data-i18n-title="settings.view.my_language_short" title="My language" data-i18n-aria-label="settings.view.my_language_short" aria-label="My language"></select>
-        <button class="gear" id="logoutBtn" title="Logout"><img src="/logout.svg" class="topbar-icon" data-i18n-alt="global.topbar.logout_title" alt="Logout"></button>
+        <button class="gear" id="logoutBtn" title="Logout"><img src="logout.svg" class="topbar-icon" data-i18n-alt="global.topbar.logout_title" alt="Logout"></button>
       </div>
     </div>
     <div class="setup" id="setup">
@@ -524,7 +524,7 @@
             <input class="field" id="fwSearch" type="search" data-i18n-placeholder="settings.firmware.search_placeholder" placeholder="Search name, model or version…" data-i18n-aria-label="settings.firmware.search_aria" aria-label="Search printers" autocomplete="off">
             <select class="field" id="fwConnector" data-i18n-aria-label="settings.firmware.filter_aria" aria-label="Filter by connector"></select>
             <div class="sort-wrap">
-              <button class="gear" id="fwSortBtn" title="Sort printers" data-i18n-aria-label="settings.firmware.sort_title" aria-label="Sort printers"><img src="/sort.svg" class="topbar-icon" alt=""></button>
+              <button class="gear" id="fwSortBtn" title="Sort printers" data-i18n-aria-label="settings.firmware.sort_title" aria-label="Sort printers"><img src="sort.svg" class="topbar-icon" alt=""></button>
               <div class="sort-menu" id="fwSortMenu">
                 <button class="sort-opt" data-fwsort="default"><span class="sort-check" id="fwsc-default"></span><span data-i18n="settings.firmware.sort_default">Default order</span></button>
                 <button class="sort-opt" data-fwsort="name"><span class="sort-check" id="fwsc-name"></span><span data-i18n="settings.firmware.sort_name">By name</span></button>
@@ -823,8 +823,8 @@
           <div class="jt-row">
             <div class="jt" id="jt"></div>
             <div class="jcard-actions">
-              <button class="jcard-btn" id="jobEject" data-i18n-title="fleet.job.deselect_title" title="Deselect job"><img src="/eject-pill.svg" class="jcard-icon" data-i18n-alt="fleet.job.deselect_alt" alt="Deselect"></button>
-              <button class="jcard-btn" id="jobSend" data-i18n-title="fleet.modal.send.title" title="Send to printers"><img src="/send-pill.svg" class="jcard-icon" data-i18n-alt="fleet.modal.send.title" alt="Send to printers"></button>
+              <button class="jcard-btn" id="jobEject" data-i18n-title="fleet.job.deselect_title" title="Deselect job"><img src="eject-pill.svg" class="jcard-icon" data-i18n-alt="fleet.job.deselect_alt" alt="Deselect"></button>
+              <button class="jcard-btn" id="jobSend" data-i18n-title="fleet.modal.send.title" title="Send to printers"><img src="send-pill.svg" class="jcard-icon" data-i18n-alt="fleet.modal.send.title" alt="Send to printers"></button>
             </div>
           </div>
           <div class="jmeta" id="jmeta"></div>
@@ -1108,7 +1108,7 @@
   <div class="modal" id="holdConfirmModal">
     <div class="modalbox hc-box" style="max-width:440px">
       <div class="hc-header">
-        <img src="/estop-icon.svg" class="hc-header-icon" id="hcIcon" alt="">
+        <img src="estop-icon.svg" class="hc-header-icon" id="hcIcon" alt="">
         <div class="hc-header-text">
           <div class="hc-title" id="hcTitle"></div>
           <div class="hc-subtitle" id="hcSubtitle"></div>
@@ -1435,8 +1435,8 @@
   </div>
 </div>
 
-<script src="/error-codes.js"></script>
-<script src="/i18n.js"></script>
-<script src="/app.js"></script>
+<script src="error-codes.js"></script>
+<script src="i18n.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

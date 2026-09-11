@@ -97,7 +97,7 @@ test("/api/test-connection caps verificationCode at the same 8 chars sanitizePri
 });
 
 test("the Test connection click handler sends the row's serial and verificationCode", () => {
-  const at = clientSrc.indexOf('postJSON("/api/test-connection"');
+  const at = clientSrc.indexOf('postJSON("api/test-connection"');
   assert.ok(at !== -1, "the client must POST, matching the route");
   const call = clientSrc.slice(at, at + 400);
   assert.match(call, /serial:row\.querySelector\("\.pserial"\)\.value\.trim\(\)/);
