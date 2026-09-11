@@ -200,7 +200,7 @@ test("the route keeps its cheap synchronous guards before accepting a job", () =
 
 // ---- frontend: neither caller may treat HTTP 200 as "printing" ----
 test("the card Print button polls the job instead of trusting the response", () => {
-  const i = appSrc.indexOf('postJSON("/api/printfile"');
+  const i = appSrc.indexOf('postJSON("api/printfile"');
   assert.ok(i > 0, "card print path must exist");
   const block = appSrc.slice(i - 400, i + 1200);
   assert.match(block, /pollJob\(/, "must hand off to the shared job poller");
@@ -209,8 +209,8 @@ test("the card Print button polls the job instead of trusting the response", () 
 });
 
 test("the Printer Files modal polls the job too", () => {
-  const first = appSrc.indexOf('postJSON("/api/printfile"');
-  const i = appSrc.indexOf('postJSON("/api/printfile"', first + 1);
+  const first = appSrc.indexOf('postJSON("api/printfile"');
+  const i = appSrc.indexOf('postJSON("api/printfile"', first + 1);
   assert.ok(i > 0, "printer-files modal print path must exist");
   const block = appSrc.slice(i - 400, i + 1200);
   assert.match(block, /pollJob\(/, "must hand off to the shared job poller");

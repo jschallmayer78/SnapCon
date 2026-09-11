@@ -154,7 +154,7 @@ test("firmwareFolder is persisted and returned like the other folder settings", 
 
 test("the picker never sends an absolute path, and the selection stays transient", () => {
   const appSrc = fs.readFileSync(path.join(__dirname, "..", "public", "app.js"), "utf8");
-  assert.match(appSrc, /getJSON\("\/api\/firmware-files"\+\(rel\?"\?path="\+encodeURIComponent\(rel\):""\)\)/);
+  assert.match(appSrc, /getJSON\("api\/firmware-files"\+\(rel\?"\?path="\+encodeURIComponent\(rel\):""\)\)/);
   assert.match(appSrc, /let SELECTED_FIRMWARE=null;/);
   // Persisting the choice would mean adding it to the config save body.
   assert.equal(/SELECTED_FIRMWARE/.test(appSrc.slice(appSrc.indexOf("const body={ gcodeFolder"), appSrc.indexOf("const body={ gcodeFolder") + 2000)), false);

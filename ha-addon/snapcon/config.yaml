@@ -1,6 +1,9 @@
 # SnapCon as a Home Assistant add-on. See DOCS.md.
 name: SnapCon
-version: "0.7.0"
+# <SnapCon version>.<add-on revision>: a new revision makes Home Assistant
+# offer an update (rebuild with the new add-on settings) without a SnapCon
+# release. Back to the plain SnapCon version with the next release.
+version: "0.7.0.1"
 slug: snapcon
 description: Fleet dashboard for Snapmaker U1 and Bambu Lab H2 3D printers
 url: https://github.com/jschallmayer78/SnapCon
@@ -17,6 +20,22 @@ ports:
 ports_description:
   4545/tcp: SnapCon dashboard (change it in SnapCon's Settings, not here)
 webui: http://[HOST]:[PORT:4545]
+# Sidebar panel: Home Assistant proxies the dashboard (ingress), so it opens
+# inside HA — also remotely via Home Assistant Cloud / your HA URL — behind
+# HA's own login. The direct http://<ha-ip>:4545 access keeps working.
+ingress: true
+# SnapCon listens on the host network on its own port; the Supervisor
+# reaches it there.
+ingress_port: 4545
+# Stream request bodies instead of buffering them: G-code uploads can be
+# hundreds of MB.
+ingress_stream: true
+panel_icon: mdi:printer-3d
+panel_title: SnapCon
+# Only Home Assistant administrators see the panel. Set to false (in a
+# local add-on) to show it to every HA user — SnapCon's own User Access
+# Management can still restrict what they may do.
+panel_admin: true
 # Restarted by the Supervisor if the dashboard stops answering (when the
 # add-on's Watchdog switch is on).
 watchdog: http://[HOST]:[PORT:4545]/api/version

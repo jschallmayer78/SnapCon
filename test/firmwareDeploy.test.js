@@ -366,7 +366,7 @@ test("the frontend gate is advisory — the server re-asks and its answer decide
   const start = uiSlice("async function startFirmwareDeploy(", "// The progress row is created lazily");
   // Sent as stable ids rather than row indexes — a Settings save can reorder
   // the fleet between the list being drawn and Deploy being pressed.
-  assert.match(start, /postJSON\("\/api\/firmware-deploy",\{\s*\n?\s*printers:refs, path:SELECTED_FIRMWARE\.path/);
+  assert.match(start, /postJSON\("api\/firmware-deploy",\{\s*\n?\s*printers:refs, path:SELECTED_FIRMWARE\.path/);
   assert.match(routeSrc, /const wanted = Array\.isArray\(b\.printers\)/);
   assert.match(routeSrc, /const blocked = await firmwareDeployBlockedBy\(p\);/);
   assert.match(jobSrc, /const stillBlocked = await firmwareDeployBlockedBy\(p\);/);
@@ -517,7 +517,7 @@ test("the two toggles are saved settings, and the tab has no Save button", () =>
   // just a control that does nothing for the thing in front of you.
   assert.match(appSrc, /name==="queue"\|\|name==="firmware"\)\?"none":""/);
   assert.match(appSrc, /\["fwSkipCurrent","fwVerify"\]\.forEach\(id=>\{/);
-  assert.match(appSrc, /postJSON\("\/api\/firmware-options"/);
+  assert.match(appSrc, /postJSON\("api\/firmware-options"/);
   // Its own route: a partial /api/config post falls back to the current value
   // for every field it omits, which is far too much to risk for two booleans.
   assert.match(serverSrc, /app\.post\("\/api\/firmware-options", requireAdmin,/);
@@ -707,7 +707,7 @@ test("the row re-reads its version once the deploy lands", () => {
   // still the one the printer reported BEFORE it was flashed — the one number
   // someone looks at to confirm the update took.
   const fn = uiSlice("async function refreshFirmwareRow(", "async function loadFirmware(");
-  assert.match(fn, /getJSON\("\/api\/firmware\?printer="/, "one printer, not the fleet");
+  assert.match(fn, /getJSON\("api\/firmware\?printer="/, "one printer, not the fleet");
   assert.equal(/loadFirmware\(\)/.test(fn), false, "must not re-probe every printer");
   // Its version changed, so it may belong in a different group now.
   assert.match(fn, /renderFirmwareList\(\);/);
@@ -756,7 +756,7 @@ test("a server that cannot answer the inspect call is not reported as a corrupt 
   const fn = appSrc.slice(appSrc.indexOf("async function inspectSelectedFirmware("),
                           appSrc.indexOf("// ---- Deploy firmware ----"));
   assert.ok(fn.length > 0, "the inspect helper must exist");
-  assert.match(fn, /await fetch\("\/api\/firmware-inspect\?path="/);
+  assert.match(fn, /await fetch\("api\/firmware-inspect\?path="/);
   assert.match(fn, /if\(!\(r\.headers\.get\("content-type"\)\|\|""\)\.includes\("application\/json"\)\)\{/);
   assert.equal(/r\.status!==404/.test(fn), false,
     "a status-based branch cannot distinguish a missing route from a missing file");
@@ -785,7 +785,7 @@ test("a deploy in flight is not restarted by the page — the server owns it", (
   // Progress is server state polled by the page, not page state pushed to the
   // server: closing the tab mid-deploy must not stop or restart anything.
   const poll = uiSlice("async function pollFirmwareStatus(", "function renderFirmwareStatus(");
-  assert.match(poll, /getJSON\("\/api\/firmware-status"\)/);
+  assert.match(poll, /getJSON\("api\/firmware-status"\)/);
   assert.equal(/postJSON|firmware-deploy"/.test(poll), false, "polling must not be able to start work");
   assert.match(poll, /catch\{ return; \}/, "a transient poll failure is not a deploy failure");
   // Entering the tab re-attaches to whatever the server is doing, and also

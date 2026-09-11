@@ -110,7 +110,7 @@
   // exactly one code path that works regardless of session state rather than
   // branching on auth here. See server.js's /api/public-locales* comment.
   async function fetchLocale(locale){
-    const r=await fetch("/api/public-locales/"+encodeURIComponent(locale));
+    const r=await fetch("api/public-locales/"+encodeURIComponent(locale));
     if(!r.ok) throw new Error("HTTP "+r.status);
     const d=await r.json();
     return flatten(d.data,"");
