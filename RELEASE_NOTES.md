@@ -525,3 +525,35 @@ one:
 - `SNAPCON_DATA_DIR` optionally moves every writable file — config, users, languages, audit trail,
   queue, Remote Access identity — into one directory, which is what the add-on uses and what makes
   a single-volume Docker setup possible. Unset, the layout is exactly as before.
+
+Unreleased
+
+### Controlling a Bambu Lab printer
+A Bambu Lab printer can now be controlled from SnapCon, not only watched — per
+printer, and only once you switch it on. Bambu's Authorization Control firmware
+accepts commands over the printer's local connection only while the printer is
+in **LAN Only Mode**, which also cuts it off from Bambu's cloud and the Handy
+app; that is a decision about the machine, not something SnapCon should make for
+you. So: switch LAN Only Mode on at the printer, then tick **LAN Only Mode —
+allow control** for that printer in Settings. Everything below appears with it,
+and nothing changes for a printer you leave alone.
+
+- **Pause, Resume, Cancel**, the **bed temperature** (Preheat and the bulk heat
+  modal) and **unload filament** — the same buttons every other printer has.
+- **Chamber light**, the printer's four **speed presets** and the
+  **part-cooling fan**, in a compact row under the card's buttons. They show
+  what the printer reports, so they are right even when someone changed them at
+  the machine.
+- **Starting a file that is already on the printer.** The Print button lists the
+  `.3mf` projects on the printer's storage with their colours and estimated
+  time. SnapCon reads the plate and the file's filaments out of the `.3mf` and
+  maps them onto the AMS trays by material and colour; a file whose filaments
+  are not all in the AMS is started without it rather than stalling on the first
+  colour change. Bed levelling, flow calibration and timelapse ride along from
+  that printer's own settings.
+
+Commands wait for the printer's own answer, so one it refuses is reported
+instead of quietly doing nothing, and every command is written to the audit
+trail. SnapCon still cannot send files to a Bambu printer — slice in Bambu
+Studio, send it to the printer there, then start it from SnapCon — and there is
+no E-Stop, because Bambu's local protocol has none and Cancel is not one.

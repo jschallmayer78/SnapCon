@@ -3,7 +3,7 @@
     "locale": "es",
     "language": "Spanish",
     "nativeName": "Español",
-    "version": 49,
+    "version": 50,
     "snapconVersion": "0.8.0",
     "updated": "2026-09-14"
   },
@@ -47,7 +47,17 @@
     "action_plate_title": "Placa {done}/{total}",
     "action_estop_unsupported_title": "La parada de emergencia no está disponible en esta impresora: su firmware acepta el comando sin detenerse. Usa Cancelar o corta la alimentación de la impresora.",
     "monitor_only_label": "Solo supervisión",
-    "monitor_only_title": "SnapCon muestra el estado de esta impresora pero no la controla. Usa la pantalla de la impresora, Bambu Studio o Bambu Handy para pausar, detener o iniciar impresiones."
+    "monitor_only_title": "SnapCon muestra el estado de esta impresora pero no la controla. Usa la pantalla de la impresora, Bambu Studio o Bambu Handy para pausar, detener o iniciar impresiones.",
+    "light_label": "Luz",
+    "light_on_title": "Encender la luz de la cámara",
+    "light_off_title": "Apagar la luz de la cámara",
+    "speed_label": "Velocidad",
+    "speed_silent": "Silencioso",
+    "speed_standard": "Estándar",
+    "speed_sport": "Deportivo",
+    "speed_ludicrous": "Extremo",
+    "fan_label": "Ventilador",
+    "extras_sending": "Enviando…"
   },
   "fleet": {
     "estop_status_sending": "Enviando parada de emergencia…",
@@ -1089,7 +1099,9 @@
       "transport_option_native": "API de FlashForge (puerto 8898)",
       "transport_option_moonraker": "Moonraker (puerto 7125)",
       "transport_hint": "El firmware original ofrece la API de FlashForge en el puerto 8898. Un firmware modificado como ZMOD o Forge-X la sustituye por Moonraker en el puerto 7125. SnapCon detecta normalmente cuál está activo y vuelve a comprobarlo si cambia; fija uno concreto solo si la detección falla.",
-      "monitor_only_hint": "Solo supervisión: SnapCon lee el estado, el progreso, las temperaturas y las ranuras del AMS a través de la conexión local de la impresora y nunca le envía comandos. Introduce el número de serie de la impresora y su código de acceso LAN de 8 caracteres (en la impresora: Ajustes → Red / Modo solo LAN). No es necesario activar el Modo solo LAN. Para la cámara, activa «LAN Only Liveview» en la impresora; para las vistas previas de los trabajos, activa «Guardar archivos enviados en almacenamiento externo» con una memoria USB o tarjeta SD insertada."
+      "monitor_only_hint": "Solo supervisión: SnapCon lee el estado, el progreso, las temperaturas y las ranuras del AMS a través de la conexión local de la impresora y nunca le envía comandos. Introduce el número de serie de la impresora y su código de acceso LAN de 8 caracteres (en la impresora: Ajustes → Red / Modo solo LAN). No es necesario activar el Modo solo LAN. Para la cámara, activa «LAN Only Liveview» en la impresora; para las vistas previas de los trabajos, activa «Guardar archivos enviados en almacenamiento externo» con una memoria USB o tarjeta SD insertada.",
+      "lan_control_label": "Modo solo LAN: permitir control",
+      "lan_control_desc": "Envía órdenes a esta impresora (pausar, reanudar, cancelar, temperatura, luz, velocidad y empezar un archivo que ya está en la impresora) en lugar de solo vigilarla. Las impresoras Bambu Lab aceptan órdenes por la conexión local únicamente en modo solo LAN, así que actívalo primero en la impresora."
     },
     "firmware": {
       "get_button": "Actualizar versiones",

@@ -36,11 +36,12 @@ test("declares itself monitor-only and offers no control surface", () => {
   assert.equal(caps.cameraStream, false, "no camera until the printer reports LAN Only Liveview");
 });
 
-test("every control export refuses with the monitor-only error instead of acting", async () => {
-  for (const fn of ["uploadFile", "startPrintFile", "pause", "resume", "cancel", "eject", "estop", "bedTemp"]) {
-    await assert.rejects(bambu[fn]({ name: "H2D-1" }), e => e.code === "monitor_only" && e.status === 409 && /H2D-1/.test(e.message), fn);
+test("without the LAN-control switch every control export refuses instead of acting", async () => {
+  for (const fn of ["uploadFile", "startPrintFile", "pause", "resume", "cancel", "eject", "estop", "bedTemp", "unloadFilament", "setChamberLight", "setPrintSpeed", "setPartFan"]) {
+    await assert.rejects(bambu[fn]({ name: "H2D-1" }, 1), e => e.code === "monitor_only" && e.status === 409 && /H2D-1/.test(e.message), fn);
   }
-  assert.deepEqual(await bambu.listFiles({}), []);
+  assert.deepEqual(await bambu.listFiles({}), [], "and nothing on the printer is offered to print");
+  assert.deepEqual((await bambu.getFileMetadata({}, "x")).palette, []);
   await assert.rejects(bambu.getThumbnail({}, "x"), e => e.status === 404);
 });
 

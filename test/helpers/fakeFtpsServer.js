@@ -7,7 +7,8 @@
 // commands off to exercise the fallbacks.
 const tls = require("tls");
 
-function createFakeFtpsServer({ key, cert, accessCode, files = {}, noRest = false, noSize = false }) {
+function createFakeFtpsServer({ key, cert, accessCode, files = {}, noRest = false, noSize = false, noMdtm = false, mtimes = null }) {
+  const opts = { noMdtm, mtimes };
   const state = { logins: 0, commands: [], bytesSent: 0, retrs: 0, sockets: new Set() };
   const server = tls.createServer({ key, cert }, (sock) => {
     state.sockets.add(sock);
@@ -43,6 +44,14 @@ function createFakeFtpsServer({ key, cert, accessCode, files = {}, noRest = fals
       if (cmd === "SIZE") {
         if (noSize) return reply("502 Command not implemented");
         return files[arg] ? reply("213 " + files[arg].length) : reply("550 No such file");
+      }
+      if (cmd === "MDTM") {
+        if (opts.noMdtm) return reply("502 Not implemented");
+        if (!(arg in files)) return reply("550 No such file");
+        const t = (opts.mtimes && opts.mtimes[arg]) || Date.UTC(2026, 8, 1, 12, 0, 0);
+        const d = new Date(t);
+        const pad = (n) => String(n).padStart(2, "0");
+        return reply("213 " + d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + pad(d.getUTCHours()) + pad(d.getUTCMinutes()) + pad(d.getUTCSeconds()));
       }
       if (cmd === "REST") {
         if (noRest) return reply("502 Command not implemented");

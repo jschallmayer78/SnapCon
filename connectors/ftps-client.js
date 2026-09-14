@@ -60,8 +60,20 @@ class FtpsClient extends EventEmitter {
     throw Object.assign(new Error("SIZE not supported (" + r.code + ")"), { code: "ENOSIZE" });
   }
 
-  async list(dir) {
-    const data = await this._transfer("NLST " + dir, 0, Infinity);
+  // Last-modified time, when the server offers MDTM ("213 YYYYMMDDHHMMSS",
+  // UTC). Returns null when it does not — a listing without dates still
+  // works, it just cannot be sorted newest-first.
+  async mdtm(path) {
+    const r = await this.cmd("MDTM " + path);
+    if (r.code !== 213) return null;
+    const m = /(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(r.text);
+    if (!m) return null;
+    const [, y, mo, d, h, mi, sec] = m;
+    return Date.UTC(+y, +mo - 1, +d, +h, +mi, +sec);
+  }
+
+  async list(dir, maxBytes = Infinity) {
+    const data = await this._transfer("NLST " + dir, 0, Infinity, maxBytes);
     return data.toString("utf8").split(/\r?\n/).map(s => s.trim()).filter(Boolean).map(s => s.slice(s.lastIndexOf("/") + 1));
   }
 

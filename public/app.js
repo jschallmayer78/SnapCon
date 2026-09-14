@@ -459,6 +459,48 @@ function monitorOnlyNoteHtml(compact){
     `<span>${esc(t("printer.monitor_only_label"))}</span></span>`;
 }
 
+// Chamber light, speed preset and part fan: one compact row under the card's
+// buttons, for a printer whose connector says it has them (today a Bambu Lab
+// in LAN Only Mode, but nothing here is Bambu-specific). A printer with none
+// of them renders nothing at all.
+const SPEED_LEVELS=[["1","printer.speed_silent"],["2","printer.speed_standard"],["3","printer.speed_sport"],["4","printer.speed_ludicrous"]];
+const FAN_STEPS=[0,25,50,75,100];
+function printerExtrasHtml(p){
+  const caps=p.capabilities||{};
+  if(!p.online||monitorOnly(p)) return "";
+  const bits=[];
+  if(caps.chamberLight){
+    const on=p.lightOn===true;
+    bits.push(`<button class="btn-chip extra-chip${on?' on':''}" data-light="${p.id}" data-on="${on?1:0}" title="${esc(t(on?"printer.light_off_title":"printer.light_on_title"))}"><img src="light.svg" alt=""><span>${esc(t("printer.light_label"))}</span></button>`);
+  }
+  if(caps.printSpeed){
+    const cur=String(p.speedLevel||2);
+    bits.push(`<label class="extra-field"><span class="extra-label">${esc(t("printer.speed_label"))}</span><select class="extra-select" data-speed="${p.id}">`+
+      SPEED_LEVELS.map(([v,k])=>`<option value="${v}"${cur===v?" selected":""}>${esc(t(k))}</option>`).join("")+`</select></label>`);
+  }
+  if(caps.partFan){
+    const now=typeof p.fanPct==="number"?p.fanPct:0;
+    const cur=FAN_STEPS.reduce((best,s)=>Math.abs(s-now)<Math.abs(best-now)?s:best,FAN_STEPS[0]);
+    bits.push(`<label class="extra-field"><span class="extra-label">${esc(t("printer.fan_label"))}</span><select class="extra-select" data-fan="${p.id}">`+
+      FAN_STEPS.map(s=>`<option value="${s}"${s===cur?" selected":""}>${s}%</option>`).join("")+`</select></label>`);
+  }
+  return bits.length?`<div class="printer-extras">${bits.join("")}</div>`:"";
+}
+// One request per control, with the result (or the printer's refusal) landing
+// in the card's own status line. The fleet is re-read afterwards so the row
+// shows what the printer actually reports, not what was asked for.
+async function sendPrinterExtra(id, url, body){
+  const st=$("pst-"+id);
+  if(st) st.textContent=t("printer.extras_sending");
+  try{
+    const r=checkAuthFailure(await postJSON(url,{printer:id,...body}));
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||d.error) throw new Error(d.error||("HTTP "+r.status));
+    if(st) st.textContent="";
+    loadFleet();
+  }catch(err){ if(st) st.textContent=err.message; }
+}
+
 function canEject(p){
   if(!p) return false;
   const st=p.state;
@@ -5576,6 +5618,9 @@ function cardSignature(p){
     filamentUsed:p.filamentUsed, completedAt:p.completedAt,
     errorCode:p.errorCode, message:p.message, plate:p.plate,
     activeExt:p.activeExt, forceDefaults:p.forceDefaults,
+    // What the extras row shows (printerExtrasHtml) — they only move when
+    // somebody changes them, so a rebuild is the right way to follow them.
+    lightOn:p.lightOn, speedLevel:p.speedLevel,
     heads:p.heads, capabilities:p.capabilities, tags:p.tags,
     queuedFile:p.queuedFile, layer:p.layer, stem,
     // Temperatures used to live here for a real reason: a printer sitting
@@ -5777,6 +5822,7 @@ function buildCardHtml(p, need, dragEnabled){
             + (p.state==='complete'&&p.filename?`<button class="btn-chip" ${canAct()?"":"disabled"} data-reprint="${p.id}" title="${esc(t("printer.action_reprint_title",{filename:p.filename}))}"><img src="reprint-icon.svg" alt=""><span>${esc(t("printer.action_reprint"))}</span></button>`:"")
         }
       </div>
+      ${printerExtrasHtml(p)}
       <div class="pstatus" id="pst-${p.id}"></div>`;
     return card;
 }
@@ -6443,6 +6489,8 @@ function wireFleetCardEvents(){
     if(preheatBtn){ openPreheat(parseInt(preheatBtn.dataset.preheat,10)); return; }
     const reprintBtn=e.target.closest("button[data-reprint]");
     if(reprintBtn){ doReprint(parseInt(reprintBtn.dataset.reprint,10)); return; }
+    const lightBtn=e.target.closest("button[data-light]");
+    if(lightBtn){ sendPrinterExtra(parseInt(lightBtn.dataset.light,10),"api/printer-light",{on:lightBtn.dataset.on!=="1"}); return; }
     // Card selection (camera view only — the checkbox only renders there):
     // the checkbox alone is too small a target to scan/click across a grid
     // of cards, so the whole header toggles it too. Excludes the checkbox
@@ -6463,6 +6511,10 @@ function wireFleetCardEvents(){
     if(thumbEl&&(e.key==="Enter"||e.key===" ")){ e.preventDefault(); openThumb(parseInt(thumbEl.dataset.thumb,10)); }
   });
   wrap.addEventListener("change", e=>{
+    const speedEl=e.target.closest("select[data-speed]");
+    if(speedEl){ sendPrinterExtra(parseInt(speedEl.dataset.speed,10),"api/print-speed",{level:parseInt(speedEl.value,10)}); return; }
+    const fanEl=e.target.closest("select[data-fan]");
+    if(fanEl){ sendPrinterExtra(parseInt(fanEl.dataset.fan,10),"api/part-fan",{percent:parseInt(fanEl.value,10)}); return; }
     const chk=e.target.closest(".cam-chk");
     if(!chk) return;
     const id=parseInt(chk.dataset.camsel,10);
@@ -10730,6 +10782,7 @@ function serializeRowForDiff(row){
     forceDefaults:row.querySelector('[id^="pforcedefaults-"]').checked,
     filamentMode:row.querySelector(".pfilmode").value,
     cameraLiveFps:row.querySelector(".pcameralive").value,
+    lanControl:row.querySelector('[id^="plancontrol-"]').checked,
     transport:row.querySelector(".ptransport").value,
     tags:row.querySelector(".ptags").value.trim(),
     allowedGroups:[...row.querySelectorAll(".pgroups-chk:checked")].map(c=>c.value).sort().join(",")
@@ -10743,7 +10796,7 @@ function serializeRowForDiff(row){
 // load.
 function renderPrinterRowsFromConfig(){
   $("setPrinters").innerHTML="";
-  PRINTERS_CFG.forEach(p=>addPrinterRow(p.name,p.url,{id:p.id,ip:p.ip,port:p.port,scheme:p.scheme,location:p.location,costKwh:p.costKwh,purchaseDate:p.purchaseDate,autoLevel:p.autoLevel,flowCalibrate:p.flowCalibrate,timelapse:p.timelapse,pushNotify:p.pushNotify,forceDefaults:p.forceDefaults,connector:p.connector,brand:p.brand,filamentMode:p.filamentMode,transport:p.transport,cameraLiveFps:p.cameraLiveFps,cameraUrl:p.cameraUrl,serial:p.serial,verificationCode:p.verificationCode,hasToken:p.hasToken,tags:p.tags,allowedGroups:p.allowedGroups,printerPoolId:p.printerPoolId}));
+  PRINTERS_CFG.forEach(p=>addPrinterRow(p.name,p.url,{id:p.id,ip:p.ip,port:p.port,scheme:p.scheme,location:p.location,costKwh:p.costKwh,purchaseDate:p.purchaseDate,autoLevel:p.autoLevel,flowCalibrate:p.flowCalibrate,timelapse:p.timelapse,pushNotify:p.pushNotify,forceDefaults:p.forceDefaults,connector:p.connector,brand:p.brand,filamentMode:p.filamentMode,transport:p.transport,cameraLiveFps:p.cameraLiveFps,cameraUrl:p.cameraUrl,lanControl:p.lanControl,serial:p.serial,verificationCode:p.verificationCode,hasToken:p.hasToken,tags:p.tags,allowedGroups:p.allowedGroups,printerPoolId:p.printerPoolId}));
   baselinePrintersDirty();
 }
 // Settings > Printers shows at most one expanded row: opening one collapses
@@ -11006,6 +11059,9 @@ function addPrinterRow(name,url,opts,autoOpen){
     switchHtml("ptimelapse-"+uid,!!opts.timelapse,t("settings.printers.timelapse_label"),t("settings.printers.timelapse_desc"),false,"settings.printers.timelapse_label","settings.printers.timelapse_desc")+
     `</div>`+
     `<div class="hint" style="margin-bottom:10px" data-i18n="settings.printers.defaults_hint">${t("settings.printers.defaults_hint")}</div>`+
+    `<div class="lancontrol-wrap" style="display:none;margin-bottom:10px">`+
+    switchHtml("plancontrol-"+uid,!!opts.lanControl,t("settings.printers.lan_control_label"),t("settings.printers.lan_control_desc"),false,"settings.printers.lan_control_label","settings.printers.lan_control_desc")+
+    `</div>`+
     `<div class="camlive-wrap" style="display:none;margin-bottom:10px;max-width:320px">`+
     `<label class="fl" data-i18n="settings.printers.field_camera_live">${t("settings.printers.field_camera_live")}</label>`+
     `<select class="field pcameralive">`+
@@ -11043,6 +11099,7 @@ function addPrinterRow(name,url,opts,autoOpen){
   const connectorEl=row.querySelector(".pconnector");
   const modelBadgeEl=row.querySelector(".prow-model-badge");
   connectorEl.value=connType;
+  const lanControlWrap=row.querySelector(".lancontrol-wrap"), lanControlEl=row.querySelector('[id^="plancontrol-"]');
   const camLiveWrap=row.querySelector(".camlive-wrap"), camLiveEl2=row.querySelector(".pcameralive");
   camLiveEl2.value=String(Math.round(Number(opts.cameraLiveFps)||0));
   if(!camLiveEl2.value||!camLiveEl2.selectedOptions.length) camLiveEl2.value="0";
@@ -11060,6 +11117,11 @@ function addPrinterRow(name,url,opts,autoOpen){
     // row's own detected camera counts as well as the connector's capability.
     // ...but only while the row still is that connector: a row switched over
     // to another brand must not keep the old one's detected camera.
+    // Only a connector that says its printers are watched until told
+    // otherwise offers this switch (today: Bambu Lab).
+    const canLanControl=!!caps.lanControlOption;
+    lanControlWrap.style.display=canLanControl?"":"none";
+    if(!canLanControl) lanControlEl.checked=false;
     const canLive=!caps.cameraStream&&(!!caps.cameraSnapshot||(!!opts.cameraUrl&&connectorEl.value===opts.connector));
     camLiveWrap.style.display=canLive?"":"none";
     if(!canLive) camLiveEl2.value="0";
@@ -11247,6 +11309,7 @@ function addPrinterRow(name,url,opts,autoOpen){
       pushNotify:row.querySelector('[id^="ppushnotify-"]').checked,
       forceDefaults:row.querySelector('[id^="pforcedefaults-"]').checked,
       cameraLiveFps:parseInt(row.querySelector(".pcameralive").value,10)||0,
+      lanControl:row.querySelector('[id^="plancontrol-"]').checked,
       connector:connectorEl.value,
       brand:brandEl.value.trim(),
       filamentMode:filModeEl.value,
@@ -11724,6 +11787,8 @@ function gatherPrinters(){
     filamentMode:r.querySelector(".pfilmode").value==="cfs"?"cfs":undefined,
     // 0 (off) is sent as undefined — a printer without a live view stores nothing.
     cameraLiveFps:(v=>v>0?v:undefined)(parseInt(r.querySelector(".pcameralive").value,10)||0),
+    // Absent means "watch only" — the connector's own default.
+    lanControl:r.querySelector('[id^="plancontrol-"]').checked||undefined,
     // Sent for every row; the server allowlists it and only the FlashForge
     // connectors ever read it. "auto" is the absence of a pin, so it is sent
     // as undefined rather than stored.

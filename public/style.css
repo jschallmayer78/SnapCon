@@ -1815,3 +1815,13 @@
   .btn-chip.icon-only{flex:none; width:30px; height:30px; padding:0; border-radius:8px;}
   .list-th-chk,.fleet-list td:first-child{text-align:center;}
   .list-th-cam{text-align:center;}
+
+/* Printer extras (chamber light / speed preset / part fan) — one compact row
+   under the card's buttons, only rendered for a printer whose connector
+   offers them (see printerExtrasHtml in app.js). */
+.printer-extras{display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding:0 12px 10px; }
+.printer-extras .extra-chip.on{border-color:var(--accent); color:var(--accent);}
+.extra-field{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--ink-dim);}
+.extra-label{white-space:nowrap;}
+.extra-select{background:var(--field-bg,transparent); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:3px 6px; font:inherit; font-size:11px;}
+.extra-select:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
