@@ -12,7 +12,7 @@ function lookupKlipperError(code, msg){
   return{code, title:entry?entry.t:(code||t("fleet.error_panel.unknown_error_title")), description:(entry&&entry.d)||msg||code||'', url:entry?entry.u:''};
 }
 const $ = id => document.getElementById(id);
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 // SnapCon can be served below a path prefix: Home Assistant's sidebar panel
 // (ingress) shows it under /api/hassio_ingress/<token>/, and the server
 // writes that prefix into the page's <base href>. So every URL the client

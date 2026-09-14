@@ -459,7 +459,7 @@ upgrading is recommended for anyone running SnapCon where more than one person c
   fail in reasonable time, with deliberately longer allowances for the few operations that really do
   take minutes.
 
-Unreleased
+0.8.0
 
 ### Bambu Lab H2 series, monitoring only
 Bambu Lab H2D, H2D Pro, H2S and H2C printers can now be added alongside the rest of the farm with
@@ -487,3 +487,41 @@ certificate authority and the printer's serial number before the access code is 
 - **Named filament lanes.** A connector can label its slots the way the printer does (A1, HT1,
   Ext-L) instead of T1..Tn.
 
+### Live camera view for printers that only take stills
+A camera that serves single JPEGs rather than video — the Snapmaker U1's, a FlashForge's, a
+Creality snapshot URL — can now show a moving picture instead of a frame every few seconds. Set
+*Live camera view* to 1–5 frames per second in that printer's settings and its tile and camera
+window play live.
+
+SnapCon does the polling itself, once per printer for every viewer at once, and only while a tile
+is actually on screen or the camera window is open; scrolling away or switching tabs closes it
+again. It is off by default and set per printer, because asking a camera for a picture several
+times a second is real load on it, and only the owner of the machine knows what it will take. At
+most three tiles run live at a time; the rest keep the ordinary still, as does any camera whose
+live view fails. While a live view runs, the still pictures elsewhere — the list view, notification
+images — come from its frames, so they cost the printer nothing extra.
+
+The Snapmaker U1's camera got two fixes along the way: the keepalive no longer pauses for over a
+second while frames are already flowing, and the moment where the printer is rewriting its picture
+is retried quickly instead of being reported as a failure.
+
+### Docker, and a Home Assistant add-on
+Running SnapCon on an always-on machine is now a documented, prepared path rather than a hand-built
+one:
+
+- **Linux server, NAS or Raspberry Pi.** `./docker-setup.sh` creates the files and folders the
+  container expects (which also stops Docker turning a missing `config.json` into a directory),
+  then `docker compose up -d --build`. Host networking, so *Discover on network* works.
+- **Docker Desktop on macOS and Windows.** An override file switches to a bridge network and
+  publishes the port, since containers there run inside a VM.
+- **Home Assistant.** Add the repository in the Add-on Store and install **SnapCon**. Its state
+  lives in the add-on's own storage and is part of Home Assistant backups, the G-code folder is
+  `/share/snapcon/gcode`, and the time zone comes from Home Assistant. Switch on *Show in sidebar*
+  and SnapCon opens as a panel inside Home Assistant — including remotely, through your existing
+  Home Assistant address, behind its login — while the direct `http://<host>:4545` keeps working on
+  the LAN.
+- The image carries a health check, optional `ffmpeg` (a build option, on by default) and a time
+  zone; `TZ`, the ffmpeg switch and the published port are settings in a `.env` file.
+- `SNAPCON_DATA_DIR` optionally moves every writable file — config, users, languages, audit trail,
+  queue, Remote Access identity — into one directory, which is what the add-on uses and what makes
+  a single-volume Docker setup possible. Unset, the layout is exactly as before.

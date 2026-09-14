@@ -3,7 +3,7 @@ name: SnapCon
 # <SnapCon version>.<add-on revision>: a new revision makes Home Assistant
 # offer an update (rebuild with the new add-on settings) without a SnapCon
 # release. Back to the plain SnapCon version with the next release.
-version: "0.7.0.3"
+version: "0.8.0"
 slug: snapcon
 description: Fleet dashboard for Snapmaker U1 and Bambu Lab H2 3D printers
 url: https://github.com/jschallmayer78/SnapCon
