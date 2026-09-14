@@ -56,12 +56,13 @@ const crypto = require("crypto");
 const { MqttClient } = require("./bambu-mqtt");
 const { BAMBU_CA_PEMS } = require("./bambu-ca");
 const { parseAddressUrl, isValidHost } = require("./address");
-const { monitorOnlyError } = require("./monitorOnly");
+const { monitorOnlyError, MONITOR_ONLY_CODE } = require("./monitorOnly");
 const camera = require("./bambu-camera");
 const preview = require("./bambu-preview");
+const files = require("./bambu-files");
 const { FtpsClient } = require("./ftps-client");
 
-exports.label = "Bambu Lab H2D / H2S / H2C (monitoring only)";
+exports.label = "Bambu Lab H2D / H2S / H2C";
 exports.brand = "Bambu Lab";
 // The broker port is fixed by the firmware; the connector applies it itself,
 // so the stored URL stays host-only (mqtts://<ip>).
@@ -76,6 +77,9 @@ exports.capabilities = {
   filamentHeads: true, headMapping: false,
   excludeObject: false, autoLevel: false, flowCalibration: false, timelapse: false,
   unloadFilament: false, setColor: false,
+  // Chamber light, the printer's four speed presets and the part-cooling fan:
+  // like control itself, only once this printer may be commanded.
+  chamberLight: false, printSpeed: false, partFan: false,
   firmwareInfo: false, firmwareDeploy: false, health: false, fileSync: false, inventory: false,
   // Bambu announces itself over SSDP on UDP, which does not fit the HTTP
   // fingerprint discoverAt(baseUrl) shape — printers are added by IP.
@@ -85,7 +89,12 @@ exports.capabilities = {
   singleToolhead: false,
   estop: false,
   // H2D/H2S heated bed is specified to 120 °C.
-  maxBedTemp: 120
+  maxBedTemp: 120,
+  // Settings shows this connector the "LAN Only Mode / allow control" switch
+  // (see getCapabilities below for what it turns on). Only a connector that
+  // declares it gets the switch, so it never appears on a brand SnapCon
+  // already controls unconditionally.
+  lanControlOption: true
 };
 
 const MQTT_PORT = 8883;
@@ -413,12 +422,33 @@ function normalizeBambuState(p, print, { job = null, now = Date.now() } = {}) {
     hotend: activeHotend(print),
     layer: total && total > 0 ? { current: Math.max(0, layerNum || 0), total } : null,
     speed: toNum(print.spd_mag),
+    // The printer's own speed preset (1 silent .. 4 ludicrous) and chamber
+    // light, so the card can show what is set rather than guessing after a
+    // command.
+    speedLevel: speedLevelOf(print),
+    lightOn: chamberLightOn(print),
     // 0-15 fan gear -> percent.
     fanPct: fanRaw != null ? Math.round(Math.max(0, Math.min(15, fanRaw)) / 15 * 100) : null,
     activeExt,
     plate: null,
     heads
   };
+}
+
+// spd_lvl is the preset the printer is running (1..4); anything else means
+// the printer did not say.
+function speedLevelOf(print) {
+  const n = toNum(print && print.spd_lvl);
+  return n != null && n >= 1 && n <= 4 ? n : null;
+}
+// lights_report lists each light node with its mode; null when the printer
+// has not reported the chamber light at all.
+function chamberLightOn(print) {
+  const list = Array.isArray(print && print.lights_report) ? print.lights_report : null;
+  if (!list) return null;
+  const light = list.find(l => l && String(l.node) === "chamber_light");
+  if (!light) return null;
+  return String(light.mode || "").toLowerCase() === "on";
 }
 
 // ---- report merging ----
@@ -476,7 +506,8 @@ function printerConfig(p) {
   if (!isValidHost(host)) return { error: "No address configured for " + ((p && p.name) || "this printer") };
   if (!serial) return { error: "Enter the printer's serial number (Settings → Printers → Hardware) — Bambu Lab printers are addressed by it." };
   if (!code) return { error: "Enter the printer's 8-character LAN access code (Settings → Printers → Hardware) — it is shown on the printer under Settings → Network / LAN Only Mode." };
-  return { host: host.replace(/^\[|\]$/g, ""), port, serial, code, sig: [host, port, serial, code].join("|") };
+  const control = !!(p && p.lanControl);
+  return { host: host.replace(/^\[|\]$/g, ""), port, serial, code, control, sig: [host, port, serial, code, control ? "c" : "m"].join("|") };
 }
 
 // ---- transport ----
@@ -568,7 +599,12 @@ function newConn(name, cfg) {
     lastProbedAt: Date.now(),
     reconnectAttempts: 0,
     reconnectTimer: null,
-    seq: 0,
+    // Started at a random point rather than 0: the printer broadcasts its
+    // replies to every subscriber, so a Bambu Studio session on the same LAN
+    // numbering its own commands from 0 too would otherwise have its answers
+    // (including its refusals) read as answers to ours.
+    seq: Math.floor(Math.random() * 1e6),
+    pending: new Map(),     // sequence_id -> waiter for a command we sent
     waiters: new Set(),
     loggedError: null,
     announced: false
@@ -599,6 +635,19 @@ function handleMessage(c, topic, payload) {
   catch { return; }
   if (!msg || typeof msg !== "object") return;
   const now = Date.now();
+  // A reply to a command SnapCon itself sent: the printer echoes the command
+  // with our sequence_id, and (on some firmwares) a result. Matched on BOTH
+  // the id and the command name, so a status push that happens to reuse an id
+  // can never be read as an acknowledgement.
+  for (const section of ["print", "system"]) {
+    const m = msg[section];
+    if (!m || typeof m !== "object" || m.sequence_id == null) continue;
+    const waiter = c.pending.get(String(m.sequence_id));
+    if (waiter && (!waiter.command || waiter.command === m.command)) {
+      c.pending.delete(String(m.sequence_id));
+      waiter.resolve(m);
+    }
+  }
   // Only push_status is printer state. Other `print` messages are echoes and
   // replies to commands (someone else's Bambu Studio session, for instance)
   // and would corrupt the merged state if folded in.
@@ -618,7 +667,7 @@ function handleMessage(c, topic, payload) {
       c.reconnectAttempts = 0;
       c.lastError = null;
       c.loggedError = null;
-      if (!c.announced) { log(c.name, "connected (monitoring only)"); c.announced = true; }
+      if (!c.announced) { log(c.name, "connected (" + (c.cfg.control ? "LAN Only Mode: control allowed" : "monitoring only") + ")"); c.announced = true; }
       wake(c);
     }
     return;
@@ -680,6 +729,10 @@ async function connect(c) {
       noteError(c, describeError(err, c.name, c.cfg.port));
     }
     if (wasReady && c.announced) { log(c.name, "disconnected"); c.announced = false; }
+    // A command still waiting for the printer's answer went with the session:
+    // its caller hears that rather than a success it never had.
+    for (const [, waiter] of c.pending) waiter.fail(new Error("the connection to the printer dropped before it answered"));
+    c.pending.clear();
     if (c.state !== "closed") scheduleReconnect(c);
     wake(c);
   });
@@ -713,6 +766,10 @@ function teardown(c) {
   c.client = null;
   if (client) { try { client.end(); } catch {} }
   c.haveBaseline = false;
+  // A command still waiting for its answer when the session goes is NOT a
+  // command that landed — the caller must hear that, not a quiet "ok".
+  for (const [, waiter] of c.pending) waiter.fail(new Error("the connection to the printer dropped before it answered"));
+  c.pending.clear();
   wake(c);
 }
 
@@ -803,16 +860,126 @@ async function probe(p) {
 }
 exports.probe = probe;
 
-// ---- everything that would change the printer: refused, by design ----
-// server.js and the UI never get here for a control:false connector; these
-// exist so any path that does (a future route, the compat wizard) fails with
-// the reason instead of "c.pause is not a function".
-for (const fn of ["uploadFile", "startPrintFile", "pause", "resume", "cancel", "eject", "estop", "bedTemp"]) {
+// ---- control ----
+// Off unless the printer is switched to LAN Only Mode and this printer's
+// "LAN Only Mode / allow control" switch is ticked in Settings. That is not
+// SnapCon being cautious for its own sake: since Bambu's 2025 "Authorization
+// Control" firmware the printer itself only accepts commands over the local
+// connection in LAN Only Mode, so a command sent to a cloud-connected printer
+// is silently dropped. Reading status needs none of this and is unchanged.
+//
+// Everything here goes through the same MQTT session the status comes from,
+// and waits for the printer's own reply to the command (matched by sequence
+// id) rather than assuming it landed.
+const CONTROL_CONNECT_MS = 8000;
+const CONTROL_ACK_MS = 3000;
+const GCODE_MAX = 200;
+
+function controlAllowed(p) { return !!(p && p.lanControl); }
+
+function controlDisabledError(p) {
+  const who = (p && p.name) || "This printer";
+  const e = new Error(who + " is set to monitoring only. Bambu Lab printers accept commands over the local connection only in LAN Only Mode — switch that on at the printer, then tick \"LAN Only Mode / allow control\" for this printer in SnapCon's Settings.");
+  e.code = MONITOR_ONLY_CODE;
+  e.status = 409;
+  return e;
+}
+
+// The live session for a saved printer, connected and ready to be published
+// on. A printer SnapCon has not talked to yet (server restarted, this is the
+// first action) is connected here rather than refused.
+async function controlConn(p) {
+  if (!controlAllowed(p)) throw controlDisabledError(p);
+  const cfg = printerConfig(p);
+  if (cfg.error) throw Object.assign(new Error(cfg.error), { status: 400 });
+  if (!p || p.id == null) throw Object.assign(new Error("This printer has not been saved yet"), { status: 400 });
+  const c = ensureConn(String(p.id), p.name || "printer", cfg);
+  if (!(c.client && c.client.connected)) await waitForBaseline(c, CONTROL_CONNECT_MS);
+  if (!(c.client && c.client.connected)) {
+    throw Object.assign(new Error("Not connected to " + (p.name || "the printer") + (c.lastError ? ": " + c.lastError : "")), { status: 502 });
+  }
+  return c;
+}
+
+// Sends one command and resolves with the printer's reply, or with null when
+// it stays quiet — some firmwares acknowledge every command, some only
+// answer the ones they refuse, so silence is not treated as failure. A reply
+// that says anything other than success is.
+async function sendCommand(p, section, command, fields = {}) {
+  const c = await controlConn(p);
+  const seq = String(c.seq++);
+  const reply = await new Promise((resolve, reject) => {
+    const done = () => { clearTimeout(timer); c.pending.delete(seq); };
+    const waiter = {
+      command,
+      resolve: (m) => { done(); resolve(m); },
+      // The session dropped, or the bytes never left: either way this command
+      // did not reach the printer.
+      fail: (err) => { done(); reject(Object.assign(new Error(command + " did not reach " + (p.name || "the printer") + " — " + err.message), { status: 502 })); }
+    };
+    const timer = setTimeout(() => { c.pending.delete(seq); resolve(null); }, CONTROL_ACK_MS);
+    if (timer.unref) timer.unref();
+    c.pending.set(seq, waiter);
+    if (!publishRequest(c, { [section]: { sequence_id: seq, command, ...fields } })) waiter.fail(new Error("it could not be sent"));
+  });
+  if (reply && reply.result != null && String(reply.result).toLowerCase() !== "success") {
+    const why = reply.reason || reply.err || reply.result;
+    throw Object.assign(new Error(command + " was refused by " + (p.name || "the printer") + " (" + why + ") — is the printer in LAN Only Mode?"), { status: 502 });
+  }
+  debugLog(p.name, "sent " + command + (reply ? " (acknowledged)" : " (no reply)"));
+  return { ok: true, acknowledged: !!reply };
+}
+
+// G-code, for the few things that have no command of their own (heaters,
+// fans). One line, no line breaks: the printer runs whatever arrives, so
+// nothing that is not built here can ever be appended to it.
+async function gcodeLine(p, line) {
+  const g = String(line);
+  if (/[\r\n\0]/.test(g) || g.length > GCODE_MAX) throw Object.assign(new Error("Refusing to send a malformed G-code line"), { status: 400 });
+  return sendCommand(p, "print", "gcode_line", { param: g });
+}
+
+exports.pause = (p) => sendCommand(p, "print", "pause", { param: "" });
+exports.resume = (p) => sendCommand(p, "print", "resume", { param: "" });
+exports.cancel = (p) => sendCommand(p, "print", "stop", { param: "" });
+exports.bedTemp = (p, t) => gcodeLine(p, "M140 S" + Math.max(0, Math.min(exports.capabilities.maxBedTemp, Math.round(Number(t) || 0))));
+exports.unloadFilament = (p) => sendCommand(p, "print", "unload_filament");
+exports.setChamberLight = (p, on) => sendCommand(p, "system", "ledctrl", {
+  led_node: "chamber_light",
+  led_mode: on ? "on" : "off",
+  // Required even for on/off, per Bambu's own protocol.
+  led_on_time: 500, led_off_time: 500, loop_times: 1, interval_time: 1000
+});
+// 1 silent, 2 standard, 3 sport, 4 ludicrous — the same four presets the
+// printer's own screen offers.
+exports.setPrintSpeed = async (p, level) => {
+  const n = Math.round(Number(level));
+  if (!(n >= 1 && n <= 4)) throw Object.assign(new Error("Speed must be 1 (silent), 2 (standard), 3 (sport) or 4 (ludicrous)"), { status: 400 });
+  return sendCommand(p, "print", "print_speed", { param: String(n) });
+};
+// Part-cooling fan, as a percentage. M106 P1 is the part fan on Bambu's
+// firmware (P2 aux, P3 chamber), which the printer takes back over at the
+// next fan change in the running job.
+exports.setPartFan = async (p, percent) => {
+  const pct = Math.max(0, Math.min(100, Math.round(Number(percent))));
+  if (!Number.isFinite(pct)) throw Object.assign(new Error("Fan speed must be a percentage"), { status: 400 });
+  return gcodeLine(p, "M106 P1 S" + Math.round(pct * 255 / 100));
+};
+
+// No emergency stop: there is no such command in Bambu's local protocol, and
+// dressing the ordinary "stop this print" up as one would be a lie about what
+// the button does. capabilities.estop stays false, so the UI hides it.
+// "Eject" means "forget the file staged on the printer", which has no meaning
+// here either.
+for (const fn of ["eject", "estop"]) {
   exports[fn] = async (p) => { throw monitorOnlyError(p && p.name); };
 }
-// Read-only and harmless: nothing on the printer is listed for printing from
-// SnapCon, since SnapCon cannot start one here.
-exports.listFiles = async () => [];
+// Sending a file to the printer is not implemented: Bambu prints .3mf files
+// sliced by Bambu Studio, not the G-code SnapCon manages.
+exports.uploadFile = async (p) => {
+  if (!controlAllowed(p)) throw controlDisabledError(p);
+  throw Object.assign(new Error("SnapCon cannot send files to " + ((p && p.name) || "a Bambu Lab printer") + " — slice in Bambu Studio and send it to the printer from there, then start it from the printer's file list here."), { status: 400 });
+};
 
 // ---- camera ----
 // The printer advertises its own stream as ipcam.rtsp_url once LAN Only
@@ -835,8 +1002,23 @@ function liveviewTarget(p) {
 // Synchronous by contract (server.js builds fleet rows with it). Reads what
 // the printer's last report said about its camera.
 function getCapabilities(p) {
-  if (!liveviewTarget(p)) return exports.capabilities;
-  return { ...exports.capabilities, camera: true, cameraStream: true, cameraSnapshot: !!camera.ffmpegPath() };
+  const caps = { ...exports.capabilities };
+  if (liveviewTarget(p)) Object.assign(caps, { camera: true, cameraStream: true, cameraSnapshot: !!camera.ffmpegPath() });
+  // The switch is what turns this printer from watched into controlled — see
+  // the control section below for why it is not simply always on.
+  if (controlAllowed(p)) {
+    caps.control = true;
+    caps.unloadFilament = true;
+    // Per-print options the printer really applies when a job is started from
+    // here (they ride along in the project_file command).
+    caps.autoLevel = true;
+    caps.flowCalibration = true;
+    caps.timelapse = true;
+    caps.chamberLight = true;
+    caps.printSpeed = true;
+    caps.partFan = true;
+  }
+  return caps;
 }
 exports.getCapabilities = getCapabilities;
 
@@ -894,6 +1076,139 @@ function defaultFtpData(cfg, port, session) {
 }
 let ftpTransportFactory = { control: defaultFtpControl, data: defaultFtpData };
 
+// One logged-in FTPS session, closed again by the caller. The certificate
+// policy is the same as the MQTT connection's: Bambu's CA, and the serial as
+// the common name, before the access code is sent.
+async function ftpSession(p) {
+  const cfg = printerConfig(p);
+  if (cfg.error) throw Object.assign(new Error(cfg.error), { status: 400 });
+  const ftp = new FtpsClient({
+    connectControl: () => ftpTransportFactory.control(cfg),
+    connectData: (port, session) => ftpTransportFactory.data(cfg, port, session)
+  });
+  try { await ftp.connect(MQTT_USER, cfg.code); }
+  catch (e) { ftp.close(); throw e; }
+  return ftp;
+}
+
+// A file name as the printer's own listing gives it: a project, below the
+// storage root. No absolute paths, no "..", no line breaks — a name that came
+// from anywhere other than that listing cannot point somewhere else.
+function isPrintableName(file) {
+  const name = String(file || "").trim();
+  if (!name || name.length > 255 || !/\.3mf$/i.test(name)) return false;
+  if (/[\r\n\0\\]/.test(name) || name.startsWith("/")) return false;
+  return !name.split("/").includes("..");
+}
+
+// ---- files on the printer, and starting one ----
+// Only offered once this printer may be controlled: without that the list is
+// empty, exactly as it was when the connector was monitoring-only, because
+// nothing could be started from it anyway.
+exports.listFiles = async (p) => {
+  if (!controlAllowed(p)) return [];
+  const ftp = await ftpSession(p);
+  try { return await files.listPrintables(ftp); }
+  finally { ftp.close(); }
+};
+
+// The colours and materials a plate needs, so the print modal can show them —
+// the same shape Moonraker's metadata produces for the other connectors.
+exports.getFileMetadata = async (p, file) => {
+  const empty = { palette: [], estimatedTime: null, isFS: false, fsFork: null };
+  if (!controlAllowed(p)) return empty;
+  if (!isPrintableName(file)) return empty;
+  const ftp = await ftpSession(p);
+  try {
+    const job = await files.readJob(ftp, file);
+    const info = job.info;
+    if (!info) return empty;
+    return {
+      palette: info.filaments.map((f, i) => ({
+        i, hex: f.color || "", type: f.type || "",
+        wt: f.usedG ? String(Math.round(f.usedG)) : "",
+        used: f.usedG > 0 || !!f.color || !!f.type
+      })),
+      estimatedTime: info.prediction || null,
+      isFS: false, fsFork: null
+    };
+  } catch (e) {
+    debugLog(p.name, "file metadata: " + e.message);
+    return empty;
+  } finally { ftp.close(); }
+};
+
+// Starts a .3mf that is already on the printer. Which plate and which AMS
+// trays are read out of the file itself (connectors/bambu-files.js); the
+// printer's own per-print options come from this printer's settings, the same
+// switches the other connectors send at print start.
+exports.startPrintFile = async (p, file) => {
+  if (!controlAllowed(p)) throw controlDisabledError(p);
+  const name = String(file || "").trim();
+  if (!isPrintableName(name)) {
+    throw Object.assign(new Error("Bambu Lab printers start .3mf projects from their own storage — \"" + name + "\" is not one."), { status: 400 });
+  }
+  // The printer's session first: what is in the AMS decides how the file is
+  // started, and reading that from a connection that does not exist yet (a
+  // restarted server, an evicted session) would silently mean "no AMS".
+  const c = await controlConn(p);
+  // ...and with a status report in hand: the AMS decides how this file is
+  // started, and "connected, nothing reported yet" would read as "no AMS".
+  if (!c.haveBaseline) await waitForBaseline(c, CONTROL_CONNECT_MS);
+  let job = { plate: 1, info: null };
+  const ftp = await ftpSession(p);
+  try { job = await files.readJob(ftp, name); }
+  catch (e) { debugLog(p.name, "reading " + name + " before printing: " + e.message); }
+  finally { ftp.close(); }
+
+  const trays = amsTrays((c && c.haveBaseline && c.status) || {});
+  const wanted = (job.info && job.info.filaments) || [];
+  const ams = files.amsMapping(wanted, trays);
+  const useAms = ams.complete;
+  if (wanted.length && !useAms) {
+    log(p.name, "starting " + name + " without the AMS: " + wanted.length + " filament(s) in the file, no matching tray for each");
+  }
+  await sendCommand(p, "print", "project_file", {
+    param: "Metadata/plate_" + job.plate + ".gcode",
+    url: "ftp://" + files._internal.toFtpPath(name),
+    file: "",
+    md5: "",
+    subtask_name: name.replace(/^.*\//, "").replace(/\.3mf$/i, ""),
+    project_id: "0", profile_id: "0", task_id: "0", subtask_id: "0",
+    bed_type: "auto",
+    bed_leveling: p.autoLevel !== false,
+    flow_cali: !!p.flowCalibrate,
+    vibration_cali: true,
+    layer_inspect: true,
+    timelapse: !!p.timelapse,
+    use_ams: useAms,
+    ams_mapping: useAms ? ams.mapping : [0]
+  });
+  return { ok: true, plate: job.plate, useAms };
+};
+
+// The printer's trays as the mapping needs them: the global tray number Bambu
+// uses in ams_mapping (unit * 4 + slot), with what is actually in it.
+function amsTrays(status) {
+  const out = [];
+  const ams = (status && status.ams) || {};
+  for (const unit of (Array.isArray(ams.ams) ? ams.ams : [])) {
+    const unitId = toNum(unit && unit.id);
+    if (unitId == null || unitId < 0 || unitId > 3) continue; // AMS HT units are not addressed by this mapping
+    for (const tray of (Array.isArray(unit.tray) ? unit.tray : [])) {
+      const slot = toNum(tray && tray.id);
+      if (slot == null || slot < 0 || slot > 3) continue;
+      out.push({
+        tray: unitId * 4 + slot,
+        loaded: !!(tray && tray.tray_type),
+        type: (tray && tray.tray_type) || null,
+        color: files._internal.normalizeColor(tray && tray.tray_color)
+      });
+    }
+  }
+  return out;
+}
+
 // `file` is the job name the card shows. The printer's own report adds which
 // plate is printing; for any other file, plate 1.
 exports.getThumbnail = async (p, file) => {
@@ -924,6 +1239,7 @@ exports.getThumbnail = async (p, file) => {
 exports._internal = {
   normalizeBambuState, decodeHeads, mergeReport, mapState, unpackTemp, formatPrintError, trackJob,
   printerConfig, describeError, handleMessage, newConn, connections, teardown, sweep,
+  gcodeLine, controlAllowed, amsTrays, speedLevelOf, chamberLightOn,
   setTransportFactory(fn) { transportFactory = fn || defaultTransport; },
   setCameraTransportFactory(fn) { cameraTransportFactory = fn || defaultCameraTransport; },
   setFtpTransportFactory(f) { ftpTransportFactory = f || { control: defaultFtpControl, data: defaultFtpData }; },

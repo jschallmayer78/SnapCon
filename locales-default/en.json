@@ -3,7 +3,7 @@
     "locale": "en",
     "language": "English",
     "nativeName": "English",
-    "version": 49,
+    "version": 50,
     "snapconVersion": "0.8.0",
     "updated": "2026-09-14"
   },
@@ -47,7 +47,17 @@
     "action_plate_title": "Plate {done}/{total}",
     "action_estop_unsupported_title": "Emergency stop is not available on this printer — its firmware acknowledges the command without halting. Use Cancel, or cut power to the printer.",
     "monitor_only_label": "Monitoring only",
-    "monitor_only_title": "SnapCon shows this printer's status but does not control it. Use the printer's screen, Bambu Studio or Bambu Handy to pause, stop or start prints."
+    "monitor_only_title": "SnapCon shows this printer's status but does not control it. Use the printer's screen, Bambu Studio or Bambu Handy to pause, stop or start prints.",
+    "light_label": "Light",
+    "light_on_title": "Switch the chamber light on",
+    "light_off_title": "Switch the chamber light off",
+    "speed_label": "Speed",
+    "speed_silent": "Silent",
+    "speed_standard": "Standard",
+    "speed_sport": "Sport",
+    "speed_ludicrous": "Ludicrous",
+    "fan_label": "Fan",
+    "extras_sending": "Sending…"
   },
   "fleet": {
     "estop_status_sending": "Sending emergency stop…",
@@ -1089,7 +1099,9 @@
       "transport_option_native": "FlashForge API (port 8898)",
       "transport_option_moonraker": "Moonraker (port 7125)",
       "transport_hint": "Stock firmware serves the FlashForge API on port 8898. A firmware mod such as ZMOD or Forge-X replaces it with Moonraker on port 7125. SnapCon normally detects which is live and re-checks if it changes — pin a specific one only if detection gets it wrong.",
-      "monitor_only_hint": "Monitoring only: SnapCon reads status, progress, temperatures and AMS slots over the printer's local connection and never sends it commands. Enter the printer's serial number and its 8-character LAN access code (on the printer: Settings → Network / LAN Only Mode). LAN Only Mode itself does not need to be switched on. For the camera, switch on \"LAN Only Liveview\" on the printer; for job previews, turn on \"Store sent files on external storage\" with a USB drive or SD card inserted."
+      "monitor_only_hint": "Monitoring only: SnapCon reads status, progress, temperatures and AMS slots over the printer's local connection and never sends it commands. Enter the printer's serial number and its 8-character LAN access code (on the printer: Settings → Network / LAN Only Mode). LAN Only Mode itself does not need to be switched on. For the camera, switch on \"LAN Only Liveview\" on the printer; for job previews, turn on \"Store sent files on external storage\" with a USB drive or SD card inserted.",
+      "lan_control_label": "LAN Only Mode — allow control",
+      "lan_control_desc": "Send this printer commands (pause, resume, cancel, temperature, light, speed, and starting a file that is on the printer) instead of only watching it. Bambu Lab printers accept commands over the local connection only while they are in LAN Only Mode, so switch that on at the printer first."
     },
     "firmware": {
       "get_button": "Refresh versions",

@@ -2420,6 +2420,42 @@ app.post("/api/bedtemp", requireRegular, async (req, res) => {
   }
 });
 
+// ---- Printer extras: chamber light, speed preset, part fan ----
+// One route per control, each gated on the capability the connector declares
+// for THIS printer — a connector that does not offer it never gets called,
+// and a monitor-only printer is refused before that.
+function extraControl(route, capability, method, parse, event) {
+  app.post(route, requireRegular, async (req, res) => {
+    const { printer } = req.body || {};
+    const p = PRINTERS[printer];
+    if (!p) return res.status(400).json({ error: "Unknown printer" });
+    if (!printerVisibleTo(req.user, p)) return res.status(403).json({ error: "You don't have access to this printer" });
+    if (refuseMonitorOnly(p, res)) return;
+    const c = getConnector(p.connector);
+    if (!getCapabilities(p.connector, p)[capability] || typeof c[method] !== "function") {
+      return res.status(400).json({ error: p.name + " does not support this" });
+    }
+    const value = parse(req.body || {});
+    if (value instanceof Error) return res.status(400).json({ error: value.message });
+    try {
+      await c[method](p, value);
+      auditLog.log({ category: "job", event, ...actorFromReq(req), printerId: p.id, printerName: p.name, detail: { value } });
+      res.json({ ok: true, printer: p.name, value });
+    } catch (e) {
+      res.status(e.status || 502).json({ error: e.message });
+    }
+  });
+}
+extraControl("/api/printer-light", "chamberLight", "setChamberLight", (b) => !!b.on, "light-set");
+extraControl("/api/print-speed", "printSpeed", "setPrintSpeed", (b) => {
+  const n = Math.round(Number(b.level));
+  return (n >= 1 && n <= 4) ? n : new Error("Speed must be 1–4");
+}, "speed-set");
+extraControl("/api/part-fan", "partFan", "setPartFan", (b) => {
+  const n = Math.round(Number(b.percent));
+  return (n >= 0 && n <= 100) ? n : new Error("Fan must be 0–100%");
+}, "fan-set");
+
 // ---- Firmware inventory (same Moonraker APIs fluidd reads) ----
 // Full firmware detail is only pulled from printers that aren't moving:
 // standby / complete / cancelled. Busy or offline machines are listed as
@@ -3143,6 +3179,9 @@ async function buildPrinterRecord(p, existing) {
   if (p.flowCalibrate) o.flowCalibrate = true;
   if (p.timelapse) o.timelapse = true;
   if (p.pushNotify) o.pushNotify = true;
+  // Bambu Lab: the printer is in LAN Only Mode and may be controlled from
+  // here. Off (absent) means watch only, which is what the connector ships as.
+  if (p.lanControl) o.lanControl = true;
   // Live camera view (frames per second, 0/absent = off): opt-in per printer
   // because it polls that camera this often for as long as someone watches.
   const liveFps = Math.round(Number(p.cameraLiveFps != null ? p.cameraLiveFps : (existing && existing.cameraLiveFps)) || 0);

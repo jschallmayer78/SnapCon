@@ -39,7 +39,11 @@ function createFakeBambuBroker({ serial, accessCode, report, version, createServ
     sockets: new Set(),
     answerPushall: true,
     answerPings: true,
-    dropAfterSubscribe: false
+    dropAfterSubscribe: false,
+    // How the printer answers a command: "success", "fail" (with ackReason) or
+    // "none" — real firmwares do all three.
+    ack: "success",
+    ackReason: "device is busy"
   };
   let currentReport = report;
 
@@ -82,6 +86,13 @@ function createFakeBambuBroker({ serial, accessCode, report, version, createServ
           try { json = JSON.parse(msg.payload.toString("utf8")); } catch {}
           state.requests.push({ topic: msg.topic, json });
           if (json && json.pushing && json.pushing.command === "pushall" && state.answerPushall && currentReport) sendReport(sock, currentReport, true);
+          for (const section of ["print", "system"]) {
+            const cmd = json && json[section] && json[section].command;
+            if (!cmd || cmd === "pushall" || cmd === "get_version" || state.ack === "none") continue;
+            const reply = { sequence_id: String(json[section].sequence_id), command: cmd, result: state.ack === "fail" ? "fail" : "success" };
+            if (state.ack === "fail") reply.reason = state.ackReason;
+            sock.write(mq.encodePublish(`device/${serial}/report`, JSON.stringify({ [section]: reply })));
+          }
           if (json && json.info && json.info.command === "get_version" && version) {
             sock.write(mq.encodePublish(`device/${serial}/report`, JSON.stringify({ info: { command: "get_version", module: version } })));
           }

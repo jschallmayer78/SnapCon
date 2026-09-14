@@ -54,16 +54,31 @@ test("no pre-existing connector became monitor-only by accident", () => {
 });
 
 test("every monitor-only connector's control exports refuse rather than act", async () => {
+  // A connector is monitor-only for a printer that has not been given
+  // permission to be controlled — for Bambu Lab that is the printer's own
+  // "LAN Only Mode — allow control" switch, absent here. Its control exports
+  // exist either way, so a stray call fails with the reason rather than a
+  // TypeError.
   for (const type of CONNECTOR_TYPES.filter(t => isMonitorOnly(getCapabilities(t, {})))) {
     const c = getConnector(type);
-    for (const fn of ["uploadFile", "startPrintFile", "pause", "resume", "cancel", "eject", "estop", "bedTemp"]) {
-      assert.equal(typeof c[fn], "function", type + " must still export " + fn + " (so a stray call fails clearly)");
-      await assert.rejects(c[fn]({ name: "p" }), e => e.code === MONITOR_ONLY_CODE, type + "." + fn);
+    for (const fn of ["uploadFile", "startPrintFile", "pause", "resume", "cancel", "eject", "estop", "bedTemp", "unloadFilament", "setChamberLight", "setPrintSpeed", "setPartFan"]) {
+      if (c[fn] === undefined) continue; // not offered at all is fine
+      assert.equal(typeof c[fn], "function", type + "." + fn);
+      await assert.rejects(c[fn]({ name: "p" }, 1), e => e.code === MONITOR_ONLY_CODE, type + "." + fn);
     }
-    for (const fn of ["applyHeadMapping", "unloadFilament", "setFilamentColor", "excludeObject"]) {
+    for (const fn of ["applyHeadMapping", "setFilamentColor", "excludeObject"]) {
       assert.equal(c[fn], undefined, type + " must not export " + fn);
     }
   }
+});
+
+test("a printer allowed to be controlled is no longer monitor-only", async () => {
+  const c = getConnector("bambulab-h2");
+  const allowed = { name: "H2D-1", lanControl: true };
+  assert.equal(isMonitorOnly(getCapabilities("bambulab-h2", allowed)), false);
+  assert.equal(isMonitorOnly(getCapabilities("bambulab-h2", { name: "H2D-1" })), true, "and is until the switch is on");
+  // It fails for want of a connection now, not because it refuses to try.
+  await assert.rejects(c.pause(allowed), e => e.code !== MONITOR_ONLY_CODE);
 });
 
 // ---- 2. server.js ----
