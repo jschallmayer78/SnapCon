@@ -29,6 +29,7 @@ const { isMonitorOnly, monitorOnlyMessage, MONITOR_ONLY_CODE } = require("./conn
 const { createRemoteAccessService } = require("./remote-access/RemoteAccessService");
 const { createAuditLog } = require("./audit/AuditLog");
 const { createSyncEngine } = require("./sync/SyncEngine");
+const { createLiveJpeg, MIN_FPS: LIVE_MIN_FPS, MAX_FPS: LIVE_MAX_FPS } = require("./camera/liveJpeg");
 const { loadConfigFile } = require("./configLoader");
 const locales = require("./locales");
 const { readNotifyToken, ensureNotifyToken, timingSafeTokenEqual } = require("./notifyToken");
@@ -2018,7 +2019,7 @@ app.get("/api/fleet", requireAuth, async (req, res) => {
     // leaked to a user who can't see it.
     if (!p || !printerVisibleTo(req.user, p)) return res.status(400).json({ error: "Unknown printer" });
     const conn = getConnector(p.connector);
-    return res.json({ id: i, url: p.url, brand: p.brand || "SnapMaker", tags: p.tags || [], capabilities: getCapabilities(p.connector, p), ...webrtcCameraFields(p, conn), colorPalette: conn.colorPalette, autoLevel: !!p.autoLevel, flowCalibrate: !!p.flowCalibrate, timelapse: !!p.timelapse, forceDefaults: p.forceDefaults !== false, ...(await probeCached(p)) });
+    return res.json({ id: i, url: p.url, brand: p.brand || "SnapMaker", tags: p.tags || [], capabilities: fleetCapabilities(p), ...webrtcCameraFields(p, conn), colorPalette: conn.colorPalette, autoLevel: !!p.autoLevel, flowCalibrate: !!p.flowCalibrate, timelapse: !!p.timelapse, forceDefaults: p.forceDefaults !== false, ...(await probeCached(p)) });
   }
   const out = await Promise.all(PRINTERS.map(async (p, i) => {
     if (!printerVisibleTo(req.user, p)) return null;
@@ -2028,7 +2029,7 @@ app.get("/api/fleet", requireAuth, async (req, res) => {
     // (pfilemodal) can default to this printer's existing preferences for
     // every role, not just Admin (who already sees them via /api/config's
     // printers[]).
-    const row = { id: i, url: p.url, brand: p.brand || "SnapMaker", tags: p.tags || [], capabilities: getCapabilities(p.connector, p), ...webrtcCameraFields(p, conn), colorPalette: conn.colorPalette, autoLevel: !!p.autoLevel, flowCalibrate: !!p.flowCalibrate, timelapse: !!p.timelapse, forceDefaults: p.forceDefaults !== false, ...(await probeCached(p)) };
+    const row = { id: i, url: p.url, brand: p.brand || "SnapMaker", tags: p.tags || [], capabilities: fleetCapabilities(p), ...webrtcCameraFields(p, conn), colorPalette: conn.colorPalette, autoLevel: !!p.autoLevel, flowCalibrate: !!p.flowCalibrate, timelapse: !!p.timelapse, forceDefaults: p.forceDefaults !== false, ...(await probeCached(p)) };
     const qf = queuedFile.get(i);
     const pl = pendingLoad.get(i);
     // queuedFile (uploading/ready/error) reflects the retry sweep actually
@@ -2199,6 +2200,70 @@ async function getSnapshotThrottled(p, idx) {
   snapshotInflight.set(idx, pending);
   return pending;
 }
+
+// ---- Live view for snapshot-only cameras (opt-in per printer) ----
+// A Snapmaker U1 (and most snapshot cameras) hands out a fresh JPEG in well
+// under 200 ms, so polling it a few times a second is a real live picture —
+// but it is real load on the printer's camera, so it only happens for a
+// printer whose cameraLiveFps is set, and only while somebody is watching.
+// One poll loop per printer feeds every viewer (see camera/liveJpeg.js).
+const liveJpeg = createLiveJpeg({ fetchFrame: (idx) => getSnapshot(PRINTERS[idx]) });
+const MJPEG_BOUNDARY = "snapconframe";
+function liveJpegFps(p) {
+  const n = Math.round(Number(p && p.cameraLiveFps) || 0);
+  return n >= LIVE_MIN_FPS ? Math.min(LIVE_MAX_FPS, n) : 0;
+}
+// cameraLive is a SnapCon-side capability, not a connector one: the transport
+// is the connector's ordinary snapshot call, and what makes it a live view is
+// this printer's own setting.
+function fleetCapabilities(p) {
+  const caps = getCapabilities(p.connector, p);
+  return (caps.cameraSnapshot && !caps.cameraStream && liveJpegFps(p)) ? { ...caps, cameraLive: true } : caps;
+}
+
+// multipart/x-mixed-replace: the oldest live-video format on the web, and the
+// only one an <img> plays by itself — no decoder, no MSE, no codec worries,
+// and it works the same on a phone, over Home Assistant's ingress and on a
+// plain-http LAN page.
+app.get("/api/camera-live", requireAuth, (req, res) => {
+  const idx = parseInt(req.query.printer, 10);
+  const p = PRINTERS[idx];
+  if (!p || !printerVisibleTo(req.user, p)) return res.status(400).json({ error: "Unknown printer" });
+  const fps = liveJpegFps(p);
+  if (!fps || !getCapabilities(p.connector, p).cameraSnapshot) return res.status(400).json({ error: p.name + " has no live camera view" });
+  let ended = false, unsubscribe = null;
+  const finish = () => {
+    if (ended) return;
+    ended = true;
+    if (unsubscribe) unsubscribe();
+    if (!res.writableEnded) res.end();
+  };
+  req.on("close", finish);
+  res.writeHead(200, {
+    "Content-Type": "multipart/x-mixed-replace; boundary=" + MJPEG_BOUNDARY,
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    // Ask an intermediate proxy (Home Assistant ingress, nginx) not to sit on
+    // the frames — a buffered live view is not a live view.
+    "X-Accel-Buffering": "no"
+  });
+  if (typeof res.flushHeaders === "function") res.flushHeaders();
+  unsubscribe = liveJpeg.subscribe(idx, {
+    fps,
+    onFrame: ({ contentType, buffer }) => {
+      if (ended) return;
+      res.write("--" + MJPEG_BOUNDARY + "\r\nContent-Type: " + (contentType || "image/jpeg") + "\r\nContent-Length: " + buffer.length + "\r\n\r\n");
+      res.write(buffer);
+      res.write("\r\n");
+      // Everything else that shows this printer (the fleet's snapshot tiles,
+      // a notification image) reads this cache, so while a live view runs
+      // they are served from its frames instead of polling the camera again.
+      snapshotCache.set(idx, { ts: Date.now(), contentType, buffer });
+    },
+    onError: finish,
+    backlog: () => res.writableLength || 0
+  });
+});
 
 app.get("/api/snapshot", requireAuth, async (req, res) => {
   const idx = parseInt(req.query.printer, 10);
@@ -3073,6 +3138,10 @@ async function buildPrinterRecord(p, existing) {
   if (p.flowCalibrate) o.flowCalibrate = true;
   if (p.timelapse) o.timelapse = true;
   if (p.pushNotify) o.pushNotify = true;
+  // Live camera view (frames per second, 0/absent = off): opt-in per printer
+  // because it polls that camera this often for as long as someone watches.
+  const liveFps = Math.round(Number(p.cameraLiveFps != null ? p.cameraLiveFps : (existing && existing.cameraLiveFps)) || 0);
+  if (liveFps >= LIVE_MIN_FPS) o.cameraLiveFps = Math.min(LIVE_MAX_FPS, liveFps);
   // Default true (unset = today's one-click Print: apply this printer's own
   // configured defaults with no per-job popup) — only ever stored when
   // explicitly turned off, so an old config.json that never wrote this field

@@ -81,13 +81,13 @@ test("coming back to the tab reconnects the visible tiles and the camera modal",
 test("the relayed stream shares the WebRTC tiles' lifecycle: every teardown path closes it", () => {
   assert.match(fnSrc(appSrc, "closeCamRtc"), /^function closeCamRtc\(id\)\{\n\s*closeCamStream\(id\);/, "closed even when no RTC session exists");
   assert.match(fnSrc(appSrc, "closeAllCamRtc"), /closeAllCamStream\(false\);/);
-  assert.match(appSrc, /if\(document\.hidden\)\{ closeAllCamRtc\(\); closeAllCamStream\(true\); return; \}/);
+  assert.match(appSrc, /if\(document\.hidden\)\{ closeAllCamRtc\(\); closeAllCamStream\(true\); closeAllCamLive\(true\); return; \}/);
   assert.match(fnSrc(appSrc, "closeSnapshot"), /closeCamStream\("snap"\);/);
 });
 
 test("Camera View mounts the relayed stream for a cameraStream printer, before the other transports", () => {
   const fn = fnSrc(appSrc, "reconcileFleetCards");
-  assert.match(fn, /if\(p\.capabilities\?\.cameraStream\) mountCamStream\(slot, p\.id\);\s*\n\s*else if\(p\.capabilities\?\.cameraWebrtc/);
+  assert.match(fn, /if\(p\.capabilities\?\.cameraStream\) mountCamStream\(slot, p\.id\);\s*\n\s*else if\(p\.capabilities\?\.cameraLive\) mountCamLive\(/);
 });
 
 test("the player uses MSE (works on plain-http LAN pages), the server's codec, and stays at the live edge", () => {
