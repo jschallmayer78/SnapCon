@@ -8,8 +8,11 @@ FROM node:22-alpine
 
 # Where the app comes from when the add-on is installed from GitHub (a local
 # add-on prepared with ha-addon/prepare-local-addon.sh brings it in app/).
+# SNAPCON_REF empty = whatever the repository's default branch is, whatever it
+# is called — a fixed "main" breaks the build the day that branch is renamed
+# or deleted. Set it to a branch or tag to pin the add-on to one.
 ARG SNAPCON_REPO=https://github.com/jschallmayer78/SnapCon.git
-ARG SNAPCON_REF=main
+ARG SNAPCON_REF=
 # Passed by the Supervisor; only used for the labels below.
 ARG BUILD_ARCH=amd64
 ARG BUILD_VERSION=dev
@@ -27,7 +30,8 @@ RUN set -e; \
       cp -a /addon/app /app; \
     else \
       apk add --no-cache --virtual .fetch git; \
-      git clone --depth 1 --branch "$SNAPCON_REF" "$SNAPCON_REPO" /app; \
+      if [ -n "$SNAPCON_REF" ]; then git clone --depth 1 --branch "$SNAPCON_REF" "$SNAPCON_REPO" /app; \
+      else git clone --depth 1 "$SNAPCON_REPO" /app; fi; \
       apk del .fetch; \
     fi; \
     cd /app; \

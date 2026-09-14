@@ -238,8 +238,12 @@ test("HA add-on: all state in /data, G-code on /share, ffmpeg built in", () => {
   assert.match(df, /io\.hass\.arch="\$\{BUILD_ARCH\}"/);
   assert.match(df, /apk add --no-cache tzdata ffmpeg/);
   assert.match(df, /if \[ -f \/addon\/app\/server\.js \]; then/, "a prepared local add-on uses its bundled app/");
-  assert.match(df, /git clone --depth 1 --branch "\$SNAPCON_REF" "\$SNAPCON_REPO" \/app/);
-  assert.match(df, /^ARG SNAPCON_REF=\S+$/m);
+  // No hardcoded branch name: an empty SNAPCON_REF clones the repository's
+  // default branch, whatever it is called today (a fixed "main" broke the
+  // build the day that branch went away).
+  assert.match(df, /if \[ -n "\$SNAPCON_REF" \]; then git clone --depth 1 --branch "\$SNAPCON_REF" "\$SNAPCON_REPO" \/app; \\\n\s*else git clone --depth 1 "\$SNAPCON_REPO" \/app; fi;/);
+  assert.doesNotMatch(df, /--branch "?main"?/);
+  assert.match(df, /^ARG SNAPCON_REF=$/m);
   assert.match(df, /^ARG SNAPCON_REPO=https:\/\/github\.com\/\S+\.git$/m);
   assert.ok(fs.statSync(path.join(ROOT, "ha-addon", "snapcon", "run.sh")).mode & 0o111, "run.sh is executable");
 });
