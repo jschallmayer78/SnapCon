@@ -732,6 +732,92 @@ function mountCamShot(slot, id, refreshMs, stagger){
   img.src="api/snapshot?printer="+id+"&t="+now;
   slot.replaceWith(img);
 }
+// ---- Live view from a snapshot-only camera ----
+// A camera that only serves single JPEGs (Snapmaker U1's monitor.jpg) still
+// makes a real moving picture if it is asked often enough. The server does
+// the asking — once per printer, for all viewers (camera/liveJpeg.js) — and
+// sends the frames as multipart/x-mixed-replace, which a plain <img> plays
+// by itself: no decoder, no MSE, works on a phone and behind Home Assistant's
+// ingress. Only for a printer whose Live view is switched on in Settings
+// (capabilities.cameraLive); every other snapshot camera keeps its still.
+//
+// Each live tile holds one HTTP connection, so — like the relayed stream —
+// only a few run at once and the rest simply stay on stills, and a tile that
+// scrolls out of view drops its connection (which is what stops the printer's
+// camera being polled for it).
+const CAM_LIVE = new Map();       // printer id, or "snap" for the modal -> <img>
+const CAM_LIVE_MAX_TILES = 3;
+let CAM_LIVE_OBSERVER = null;
+function camLiveEl(key,printerId){
+  const img=document.createElement("img");
+  img.className="cam-shot cam-live"; img.alt="";
+  img.dataset.camlive=String(printerId); img.dataset.camlivekey=String(key);
+  return img;
+}
+function camLiveTileCount(){ let n=0; for(const [k,img] of CAM_LIVE) if(k!=="snap"&&img.dataset.camlivestate==="on") n++; return n; }
+function camLiveStart(img){
+  if(img.dataset.camlivestate==="on") return;
+  img.dataset.camlivestate="on";
+  img.src="api/camera-live?printer="+img.dataset.camlive+"&t="+Date.now();
+}
+function camLiveStop(img){
+  if(img.dataset.camlivestate!=="on") return;
+  // Dropping the src is what closes the connection — the state flag is set
+  // first so the abort's own error event is not read as a dead camera.
+  img.dataset.camlivestate="off";
+  img.removeAttribute("src");
+}
+function closeCamLive(key){
+  const img=CAM_LIVE.get(key);
+  if(!img) return;
+  CAM_LIVE.delete(key);
+  if(CAM_LIVE_OBSERVER) CAM_LIVE_OBSERVER.unobserve(img);
+  camLiveStop(img);
+}
+function closeAllCamLive(includeModal){
+  for(const key of [...CAM_LIVE.keys()]) if(includeModal||key!=="snap") closeCamLive(key);
+}
+// Coming back to the tab: the modal's view is restarted directly, the tiles
+// through the observer, which re-decides what is actually on screen.
+function camLiveResume(){
+  for(const [key,img] of CAM_LIVE){
+    if(key==="snap"){ camLiveStart(img); continue; }
+    if(CAM_LIVE_OBSERVER){ CAM_LIVE_OBSERVER.unobserve(img); CAM_LIVE_OBSERVER.observe(img); }
+  }
+}
+function camLiveObserver(){
+  if(CAM_LIVE_OBSERVER) return CAM_LIVE_OBSERVER;
+  CAM_LIVE_OBSERVER=new IntersectionObserver(entries=>{
+    for(const e of entries){
+      const img=e.target;
+      if(e.isIntersecting){
+        if(img.dataset.camlivestate!=="on"&&camLiveTileCount()>=CAM_LIVE_MAX_TILES) continue;
+        camLiveStart(img);
+      }else camLiveStop(img);
+    }
+  },{root:null,rootMargin:"200px",threshold:0.01});
+  return CAM_LIVE_OBSERVER;
+}
+// Same slot contract as mountCamShot/mountCamRtc/mountCamStream. A camera
+// that cannot be streamed (switched off, printer rebooting) falls back to the
+// ordinary snapshot tile rather than leaving a broken image behind.
+function mountCamLive(slot,id,refreshMs,stagger){
+  const cached=CAM_LIVE.get(id);
+  if(cached){ slot.replaceWith(cached); return; }
+  if(camLiveTileCount()>=CAM_LIVE_MAX_TILES){ mountCamShot(slot,id,refreshMs,stagger); return; }
+  const img=camLiveEl(id,id);
+  img.onerror=()=>{
+    if(img.dataset.camlivestate!=="on") return; // our own stop, not a failure
+    closeCamLive(id);
+    if(!img.isConnected) return;
+    const next=document.createElement("div");
+    img.replaceWith(next);
+    mountCamShot(next,id,refreshMs,stagger);
+  };
+  CAM_LIVE.set(id,img);
+  slot.replaceWith(img);
+  camLiveObserver().observe(img);
+}
 // The WebRTC counterpart of mountCamShot: same slot contract (replace the
 // placeholder element), different transport. Deliberately NOT routed through
 // CAM_SHOT_CACHE — a <video> has no "next frame due" and must never be fed
@@ -1494,8 +1580,8 @@ async function init(){
     // A hidden tab has no visible camera tile, so nothing should be holding a
     // media session open. Coming back re-renders the fleet, which re-mounts
     // the tiles and lets the observer reconnect the ones actually on screen.
-    if(document.hidden){ closeAllCamRtc(); closeAllCamStream(true); return; }
-    loadFiles(); loadFleet(); camStreamResume();
+    if(document.hidden){ closeAllCamRtc(); closeAllCamStream(true); closeAllCamLive(true); return; }
+    loadFiles(); loadFleet(); camStreamResume(); camLiveResume();
   });
 }
 
@@ -5673,6 +5759,7 @@ function reconcileFleetCards(camFleet, wrap, camRefreshMs, dragEnabled, incremen
         // (Bambu with ffmpeg on the host): live video costs the server nothing
         // extra, while a snapshot per tile per refresh would spawn a decoder.
         if(p.capabilities?.cameraStream) mountCamStream(slot, p.id);
+        else if(p.capabilities?.cameraLive) mountCamLive(slot, p.id, camRefreshMs, CAM_STAGGER);
         else if(p.capabilities?.cameraWebrtc && !p.capabilities?.cameraSnapshot && p.cameraWebrtcUrl) mountCamRtc(slot, p.id, p.cameraWebrtcUrl);
         else mountCamShot(slot, p.id, camRefreshMs, CAM_STAGGER);
       }
@@ -5786,6 +5873,7 @@ const BULK_ACT_DEFS=[
 function updateCamToolbar(){
   for(const id of CAM_SELECTED){ if(!FLEET.some(f=>f.id===id)) CAM_SELECTED.delete(id); }
   for(const id of CAM_SHOT_CACHE.keys()){ if(!FLEET.some(f=>f.id===id)) CAM_SHOT_CACHE.delete(id); }
+  for(const key of [...CAM_LIVE.keys()]){ if(key!=="snap"&&!FLEET.some(f=>f.id===key)) closeCamLive(key); }
   const n=CAM_SELECTED.size;
   const cnt=$("camSelCount");
   if(cnt){ cnt.textContent = n>0 ? tn("fleet.toolbar.selected_count",n) : t("fleet.toolbar.select_all"); cnt.classList.toggle("has-selection", n>0); }
@@ -7107,6 +7195,7 @@ function closeSnapshot(){
   // running behind the modal.
   if(SNAP_RTC_OWNED!=null){ closeCamRtc(SNAP_RTC_OWNED); SNAP_RTC_OWNED=null; }
   closeCamStream("snap");
+  closeCamLive("snap");
   SNAP_PRINTER=null;
 }
 // Gives the Snapshot modal something to capture from. In Camera View a tile
@@ -7166,6 +7255,26 @@ async function loadSnapshot(){
       wrap.innerHTML='<span style="color:var(--ink-dim)">'+esc(e.message)+'</span>';
       $("snapts").textContent='';
     });
+    return;
+  }
+  // A live view (a snapshot camera polled fast enough to move) is shown live
+  // in the modal too, for the same reason as the relayed stream above.
+  const livePrinter=FLEET.find(f=>f.id===SNAP_PRINTER);
+  if(livePrinter&&livePrinter.capabilities?.cameraLive){
+    closeCamLive("snap");
+    const forPrinter=SNAP_PRINTER;
+    const img=camLiveEl("snap",forPrinter);
+    img.style.cssText='max-width:100%;max-height:65vh;border-radius:8px;display:block;margin:0 auto;background:#1b1e24;min-width:240px;min-height:135px';
+    img.onerror=()=>{
+      if(img.dataset.camlivestate!=="on"||SNAP_PRINTER!==forPrinter) return;
+      closeCamLive("snap");
+      wrap.innerHTML='<span style="color:var(--ink-dim)">'+esc(t("fleet.camera.no_feed"))+'</span>';
+      $("snapts").textContent='';
+    };
+    wrap.innerHTML=''; wrap.appendChild(img);
+    $("snapts").textContent=t("fleet.camera.live");
+    CAM_LIVE.set("snap",img);
+    camLiveStart(img);
     return;
   }
   // A WebRTC-only camera has no /api/snapshot to call — the frame can only
@@ -10531,6 +10640,7 @@ function serializeRowForDiff(row){
     pushNotify:row.querySelector('[id^="ppushnotify-"]').checked,
     forceDefaults:row.querySelector('[id^="pforcedefaults-"]').checked,
     filamentMode:row.querySelector(".pfilmode").value,
+    cameraLiveFps:row.querySelector(".pcameralive").value,
     transport:row.querySelector(".ptransport").value,
     tags:row.querySelector(".ptags").value.trim(),
     allowedGroups:[...row.querySelectorAll(".pgroups-chk:checked")].map(c=>c.value).sort().join(",")
@@ -10544,7 +10654,7 @@ function serializeRowForDiff(row){
 // load.
 function renderPrinterRowsFromConfig(){
   $("setPrinters").innerHTML="";
-  PRINTERS_CFG.forEach(p=>addPrinterRow(p.name,p.url,{id:p.id,ip:p.ip,port:p.port,scheme:p.scheme,location:p.location,costKwh:p.costKwh,purchaseDate:p.purchaseDate,autoLevel:p.autoLevel,flowCalibrate:p.flowCalibrate,timelapse:p.timelapse,pushNotify:p.pushNotify,forceDefaults:p.forceDefaults,connector:p.connector,brand:p.brand,filamentMode:p.filamentMode,transport:p.transport,serial:p.serial,verificationCode:p.verificationCode,hasToken:p.hasToken,tags:p.tags,allowedGroups:p.allowedGroups,printerPoolId:p.printerPoolId}));
+  PRINTERS_CFG.forEach(p=>addPrinterRow(p.name,p.url,{id:p.id,ip:p.ip,port:p.port,scheme:p.scheme,location:p.location,costKwh:p.costKwh,purchaseDate:p.purchaseDate,autoLevel:p.autoLevel,flowCalibrate:p.flowCalibrate,timelapse:p.timelapse,pushNotify:p.pushNotify,forceDefaults:p.forceDefaults,connector:p.connector,brand:p.brand,filamentMode:p.filamentMode,transport:p.transport,cameraLiveFps:p.cameraLiveFps,cameraUrl:p.cameraUrl,serial:p.serial,verificationCode:p.verificationCode,hasToken:p.hasToken,tags:p.tags,allowedGroups:p.allowedGroups,printerPoolId:p.printerPoolId}));
   baselinePrintersDirty();
 }
 // Settings > Printers shows at most one expanded row: opening one collapses
@@ -10807,6 +10917,14 @@ function addPrinterRow(name,url,opts,autoOpen){
     switchHtml("ptimelapse-"+uid,!!opts.timelapse,t("settings.printers.timelapse_label"),t("settings.printers.timelapse_desc"),false,"settings.printers.timelapse_label","settings.printers.timelapse_desc")+
     `</div>`+
     `<div class="hint" style="margin-bottom:10px" data-i18n="settings.printers.defaults_hint">${t("settings.printers.defaults_hint")}</div>`+
+    `<div class="camlive-wrap" style="display:none;margin-bottom:10px;max-width:320px">`+
+    `<label class="fl" data-i18n="settings.printers.field_camera_live">${t("settings.printers.field_camera_live")}</label>`+
+    `<select class="field pcameralive">`+
+    `<option value="0" data-i18n="settings.printers.camera_live_off">${t("settings.printers.camera_live_off")}</option>`+
+    [1,2,3,5].map(n=>`<option value="${n}">${esc(t(n===1?"settings.printers.camera_live_fps_one":"settings.printers.camera_live_fps",{fps:n}))}</option>`).join("")+
+    `</select>`+
+    `<div class="hint" style="margin-top:6px" data-i18n="settings.printers.camera_live_hint">${t("settings.printers.camera_live_hint")}</div>`+
+    `</div>`+
     switchHtml("ppushnotify-"+uid,!!opts.pushNotify,t("settings.printers.push_notify_label"),t("settings.printers.push_notify_desc"),false,"settings.printers.push_notify_label","settings.printers.push_notify_desc")+
     `</div>`+
 
@@ -10836,6 +10954,9 @@ function addPrinterRow(name,url,opts,autoOpen){
   const connectorEl=row.querySelector(".pconnector");
   const modelBadgeEl=row.querySelector(".prow-model-badge");
   connectorEl.value=connType;
+  const camLiveWrap=row.querySelector(".camlive-wrap"), camLiveEl2=row.querySelector(".pcameralive");
+  camLiveEl2.value=String(Math.round(Number(opts.cameraLiveFps)||0));
+  if(!camLiveEl2.value||!camLiveEl2.selectedOptions.length) camLiveEl2.value="0";
   const filModeWrap=row.querySelector(".filmode-wrap"), filModeEl=row.querySelector(".pfilmode");
   filModeEl.value=(opts.filamentMode==="cfs")?"cfs":"single";
   const transportWrap=row.querySelector(".transport-wrap"), transportEl=row.querySelector(".ptransport");
@@ -10843,6 +10964,16 @@ function addPrinterRow(name,url,opts,autoOpen){
   transportEl.value=(opts.transport==="native"||opts.transport==="moonraker")?opts.transport:"auto";
   const syncPrintPrefVisibility=()=>{
     const caps=connectorCaps(connectorEl.value);
+    // Only a camera SnapCon fetches frame by frame can be turned into a live
+    // view; a connector that already relays real video (Bambu Lab) has one.
+    // Some connectors only report a snapshot camera per printer, once one has
+    // actually been detected for that machine (Creality's cameraUrl), so the
+    // row's own detected camera counts as well as the connector's capability.
+    // ...but only while the row still is that connector: a row switched over
+    // to another brand must not keep the old one's detected camera.
+    const canLive=!caps.cameraStream&&(!!caps.cameraSnapshot||(!!opts.cameraUrl&&connectorEl.value===opts.connector));
+    camLiveWrap.style.display=canLive?"":"none";
+    if(!canLive) camLiveEl2.value="0";
     PRINTER_PREF_SWITCHES.forEach(({cap,wrapEl,inputEl})=>{
       const supported=!!caps[cap];
       wrapEl.style.display=supported?"":"none";
@@ -11026,6 +11157,7 @@ function addPrinterRow(name,url,opts,autoOpen){
       timelapse:row.querySelector('[id^="ptimelapse-"]').checked,
       pushNotify:row.querySelector('[id^="ppushnotify-"]').checked,
       forceDefaults:row.querySelector('[id^="pforcedefaults-"]').checked,
+      cameraLiveFps:parseInt(row.querySelector(".pcameralive").value,10)||0,
       connector:connectorEl.value,
       brand:brandEl.value.trim(),
       filamentMode:filModeEl.value,
@@ -11501,6 +11633,8 @@ function gatherPrinters(){
     // the derived value being echoed back, which the server re-derives anyway.
     brand:r.querySelector(".pbrand").value.trim()||undefined,
     filamentMode:r.querySelector(".pfilmode").value==="cfs"?"cfs":undefined,
+    // 0 (off) is sent as undefined — a printer without a live view stores nothing.
+    cameraLiveFps:(v=>v>0?v:undefined)(parseInt(r.querySelector(".pcameralive").value,10)||0),
     // Sent for every row; the server allowlists it and only the FlashForge
     // connectors ever read it. "auto" is the absence of a pin, so it is sent
     // as undefined rather than stored.

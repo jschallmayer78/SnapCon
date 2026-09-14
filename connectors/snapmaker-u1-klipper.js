@@ -333,10 +333,12 @@ exports.deleteSyncFile = http.deleteRemoteFile;
 // threads through to connector calls).
 const CAM_START_COOLDOWN = 5;   // seconds between repeated start_monitor calls
 const CAM_IDLE_STOP      = 60;  // seconds of inactivity before stop_monitor
-const camState = new Map();     // printer url -> { lastStart, lastRequest, stopTimer }
+const CAM_FIRST_FRAME_MS = 1200;// wait after a COLD start_monitor, for the first frame to be written
+const CAM_WARM_WINDOW    = 10;  // seconds: a frame this recent means the camera is already running
+const camState = new Map();     // printer url -> { lastStart, lastRequest, lastFrame, stopTimer }
 
 function getCamState(url) {
-  if (!camState.has(url)) camState.set(url, { lastStart: 0, lastRequest: 0, stopTimer: null });
+  if (!camState.has(url)) camState.set(url, { lastStart: 0, lastRequest: 0, lastFrame: 0, stopTimer: null });
   return camState.get(url);
 }
 
@@ -368,9 +370,14 @@ async function ensureCameraRunning(printer) {
 
   if (now - st.lastStart >= CAM_START_COOLDOWN) {
     st.lastStart = now;
+    // A camera that handed over a frame moments ago is already running: this
+    // start_monitor is only the keepalive that stops it idling out, so there
+    // is nothing to wait for. Waiting anyway would stall every fifth frame of
+    // a live view (camera/liveJpeg.js) for over a second.
+    const warm = now - st.lastFrame < CAM_WARM_WINDOW;
     await cameraRpc(printer, "camera.start_monitor", { domain, interval: 0 });
-    // Give the camera a moment to capture and write the first frame
-    await new Promise(r => setTimeout(r, 1200));
+    // Cold start: give the camera a moment to capture and write the first frame
+    if (!warm) await new Promise(r => setTimeout(r, CAM_FIRST_FRAME_MS));
   }
 
   st.lastRequest = now;
@@ -386,12 +393,16 @@ async function getCameraSnapshot(p) {
   await ensureCameraRunning(p);
   const snapUrl = http.baseUrl(p) + "/server/files/camera/monitor.jpg";
   let r = await http.fetchTimeout(snapUrl, 6000);
-  // If still 404 after the initial wait, retry once after another second
-  if (r.status === 404) {
-    await new Promise(ok => setTimeout(ok, 1000));
+  // monitor.jpg is missing for a moment while the camera rewrites it, so a
+  // 404 is retried rather than reported — briefly and twice, which is what a
+  // live view needs (a full second of waiting would drop several frames) and
+  // still covers a camera that has only just been started.
+  for (let attempt = 0; attempt < 2 && r.status === 404; attempt++) {
+    await new Promise(ok => setTimeout(ok, 400));
     r = await http.fetchTimeout(snapUrl, 6000);
   }
   if (!r.ok) throw new Error("Camera HTTP " + r.status + " — is the camera connected?");
+  getCamState(p.url).lastFrame = Date.now() / 1000;
   return { contentType: "image/jpeg", buffer: Buffer.from(await r.arrayBuffer()) };
 }
 exports.getCameraSnapshot = getCameraSnapshot;

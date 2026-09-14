@@ -53,6 +53,8 @@ The same cards, shrunk down, smaller stats, fewer buttons, no filament-lane deta
 
 #### Camera View  
 A grid focused on each printer's live camera feed, refreshed on an interval you control (with optional staggered refresh so a large fleet's cameras don't all fire at once). Printers without a camera, or with a broken feed, show a retryable placeholder instead. Shares a toolbar with List View: status tabs, tag filter, multi-select with bulk Pause/Resume/Cancel, and tag editing.
+
+A printer whose camera only serves single JPEGs (Snapmaker U1, FlashForge, a Creality snapshot URL) can show a **moving** picture instead: set *Live camera view* to 1–5 frames per second in that printer's settings. SnapCon then polls that camera itself — once per printer, for every viewer at once, and only while a tile is actually on screen or the camera window is open — and sends the frames to the page as MJPEG. It is off by default and per printer, because polling a camera several times a second is real load on it. At most three tiles run live at a time (each holds one connection); the rest keep the normal still. Printers whose camera is already a video stream (Bambu Lab) are unaffected.
 ![camera](./docs/camera.png)
 
 #### List View
@@ -191,7 +193,7 @@ The View tab controls how the printer fleet is displayed and how the view-switch
 - Use T0/T1/T2/T3 Notation:Changes toolhead numbering from the default 1–4 format to the zero-based T0–T3 format.
 - Alternate Display: Selects which view the header’s view-switch button opens or cycles through. 
 - Open in Compact Mode: Opens the fleet dashboard in the Alternate view instead of Regular view.
-- Camera View Refresh Interval: Sets how often camera snapshots refresh while using Camera view.
+- Camera View Refresh Interval: Sets how often camera snapshots refresh while using Camera view (printers with *Live camera view* on are not throttled by it — they stream at their own frame rate).
 - Stagger Camera Refresh Across Printers: Distributes camera snapshot requests across the selected refresh interval instead of requesting all printer images at once. 
 
 </p>

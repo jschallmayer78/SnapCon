@@ -38,6 +38,7 @@ COPY remote-access ./remote-access
 COPY audit ./audit
 COPY sync ./sync
 COPY queue ./queue
+COPY camera ./camera
 COPY public ./public
 # Bundled canonical locale originals (en.json + the shipped sample) — read
 # via fs, not require(), so docker.test.js's require()-graph check can't
