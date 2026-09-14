@@ -2241,6 +2241,11 @@ app.get("/api/camera-live", requireAuth, (req, res) => {
   req.on("close", finish);
   res.writeHead(200, {
     "Content-Type": "multipart/x-mixed-replace; boundary=" + MJPEG_BOUNDARY,
+    // The page splits the stream itself, because Home Assistant's ingress
+    // proxy rebuilds Content-Type and drops its boundary parameter — a
+    // browser then cannot parse the multipart stream at all. An ordinary
+    // header passes through it untouched.
+    "X-SnapCon-Boundary": MJPEG_BOUNDARY,
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
     // Ask an intermediate proxy (Home Assistant ingress, nginx) not to sit on

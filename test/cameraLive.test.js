@@ -123,29 +123,65 @@ test("server: cameraLiveFps is stored per printer, clamped, and survives a save 
 
 // ---- frontend ----
 
-test("client: a live tile is a plain <img> on the MJPEG route, capped and closed when it scrolls away", () => {
+test("client: a live tile is capped, and scrolling away closes its connection", () => {
   assert.match(appSrc, /const CAM_LIVE_MAX_TILES = 3;/);
   const mount = appSrc.slice(appSrc.indexOf("function mountCamLive("), appSrc.indexOf("// The WebRTC counterpart of mountCamShot"));
   assert.match(mount, /if\(camLiveTileCount\(\)>=CAM_LIVE_MAX_TILES\)\{ mountCamShot\(slot,id,refreshMs,stagger\); return; \}/, "beyond the cap a tile simply keeps the still picture");
   assert.match(mount, /camLiveObserver\(\)\.observe\(img\)/);
-  const start = appSrc.slice(appSrc.indexOf("function camLiveStart("), appSrc.indexOf("function camLiveStop("));
-  assert.match(start, /img\.src="api\/camera-live\?printer="\+img\.dataset\.camlive/);
-  const stop = appSrc.slice(appSrc.indexOf("function camLiveStop("), appSrc.indexOf("function closeCamLive("));
-  assert.match(stop, /img\.dataset\.camlivestate="off";\s*\n\s*img\.removeAttribute\("src"\);/, "dropping the src is what closes the connection");
-  const obs = appSrc.slice(appSrc.indexOf("function camLiveObserver("), appSrc.indexOf("// Same slot contract as mountCamShot/mountCamRtc/mountCamStream"));
-  assert.match(obs, /\}else camLiveStop\(img\);/);
+  const stop = appSrc.slice(appSrc.indexOf("function camLiveStop("), appSrc.indexOf("function camLiveRelease("));
+  assert.match(stop, /entry\.state="idle";[\s\S]*?entry\.abort\.abort\(\)/, "aborting the fetch is what closes the connection");
+  const obs = appSrc.slice(appSrc.indexOf("function camLiveObserver("), appSrc.indexOf("function camLiveKeyOf("));
+  assert.match(obs, /\}else camLiveStop\(entry\);/);
+});
+
+test("client: the page splits the MJPEG stream itself, because HA's ingress drops the boundary", () => {
+  const pump = appSrc.slice(appSrc.indexOf("async function camLivePump("), appSrc.indexOf("function camLiveStart("));
+  assert.match(pump, /fetch\("api\/camera-live\?printer="\+entry\.printerId,\{signal:entry\.abort\.signal/);
+  assert.match(pump, /r\.headers\.get\("X-SnapCon-Boundary"\)\|\|"snapconframe"/);
+  assert.match(pump, /camLiveNextFrame\(buf,boundaryBytes,gapBytes\)/);
+  assert.match(pump, /if\(buf\.length>CAM_LIVE_MAX_FRAME\) throw new Error\("live stream out of sync"\)/, "a stream that never yields a frame is not buffered forever");
+  const show = appSrc.slice(appSrc.indexOf("function camLiveShow("), appSrc.indexOf("async function camLivePump("));
+  assert.match(show, /URL\.createObjectURL\(new Blob\(\[bytes\],\{type:"image\/jpeg"\}\)\)/);
+  assert.match(show, /if\(entry\.prevUrl\)\{ try\{ URL\.revokeObjectURL\(entry\.prevUrl\); \}catch\{\} \}/, "frames are released, one behind, so the tile never flashes empty");
+  assert.match(serverSrc, /"X-SnapCon-Boundary": MJPEG_BOUNDARY/);
 });
 
 test("client: a dead live view falls back to the snapshot tile, and our own stop is not read as a failure", () => {
   const mount = appSrc.slice(appSrc.indexOf("function mountCamLive("), appSrc.indexOf("// The WebRTC counterpart of mountCamShot"));
-  assert.match(mount, /img\.onerror=\(\)=>\{\s*\n\s*if\(img\.dataset\.camlivestate!=="on"\) return;[\s\S]*?mountCamShot\(next,id,refreshMs,stagger\);/);
+  assert.match(mount, /const entry=camLiveEntry\(id,img,id,\(\)=>\{[\s\S]*?mountCamShot\(next,id,refreshMs,stagger\);/);
+  const start = appSrc.slice(appSrc.indexOf("function camLiveStart("), appSrc.indexOf("function camLiveStop("));
+  assert.match(start, /if\(entry\.state!=="on"\) return; \/\/ our own stop, not a failure/);
+});
+
+test("client: the MJPEG parser reads exactly one frame per part and waits for the rest", () => {
+  // The three helpers are pure, so they run here against a hand-built stream.
+  const vm = require("node:vm");
+  const src = ["camLiveConcat", "camLiveIndexOf", "camLiveNextFrame"].map(n => {
+    const at = appSrc.indexOf("function " + n + "(");
+    return appSrc.slice(at, appSrc.indexOf("\n}", at) + 2);
+  }).join("\n");
+  const sb = { TextDecoder, CAM_LIVE_MAX_FRAME: 16 * 1024 * 1024 };
+  vm.createContext(sb);
+  vm.runInContext(src + ";this.camLiveNextFrame=camLiveNextFrame;this.camLiveConcat=camLiveConcat;", sb);
+  const enc = new TextEncoder();
+  const part = (body) => sb.camLiveConcat(enc.encode("--snapconframe\r\nContent-Type: image/jpeg\r\nContent-Length: " + body.length + "\r\n\r\n"), sb.camLiveConcat(body, enc.encode("\r\n")));
+  const a = enc.encode("JPEG-ONE"), b = enc.encode("JPEG-TWO-LONGER");
+  const bound = enc.encode("--snapconframe"), gap = enc.encode("\r\n\r\n");
+  const stream = sb.camLiveConcat(part(a), part(b));
+  const half = stream.subarray(0, part(a).length - 3);
+  assert.equal(sb.camLiveNextFrame(half, bound, gap), null, "an incomplete frame is not shown");
+  const f1 = sb.camLiveNextFrame(stream, bound, gap);
+  assert.equal(new TextDecoder().decode(f1.bytes), "JPEG-ONE");
+  const f2 = sb.camLiveNextFrame(f1.rest, bound, gap);
+  assert.equal(new TextDecoder().decode(f2.bytes), "JPEG-TWO-LONGER");
+  assert.equal(sb.camLiveNextFrame(f2.rest, bound, gap), null);
 });
 
 test("client: the live view is used for the tile and the camera modal, and shares every teardown path", () => {
   assert.match(appSrc, /if\(p\.capabilities\?\.cameraStream\) mountCamStream\(slot, p\.id\);\s*\n\s*else if\(p\.capabilities\?\.cameraLive\) mountCamLive\(slot, p\.id, camRefreshMs, CAM_STAGGER\);/);
   const modalAt = appSrc.indexOf("async function loadSnapshot(");
   const modal = appSrc.slice(modalAt, appSrc.indexOf("\n}", appSrc.indexOf("// A WebRTC-only camera has no /api/snapshot to call", modalAt)));
-  assert.match(modal, /livePrinter\.capabilities\?\.cameraLive[\s\S]*?CAM_LIVE\.set\("snap",img\);\s*\n\s*camLiveStart\(img\);/);
+  assert.match(modal, /livePrinter\.capabilities\?\.cameraLive[\s\S]*?CAM_LIVE\.set\("snap",entry\);\s*\n\s*camLiveStart\(entry\);/);
   assert.match(appSrc, /closeCamStream\("snap"\);\s*\n\s*closeCamLive\("snap"\);/);
   assert.match(appSrc, /if\(document\.hidden\)\{ closeAllCamRtc\(\); closeAllCamStream\(true\); closeAllCamLive\(true\); return; \}/);
   assert.match(appSrc, /loadFiles\(\); loadFleet\(\); camStreamResume\(\); camLiveResume\(\);/);

@@ -736,17 +736,26 @@ function mountCamShot(slot, id, refreshMs, stagger){
 // A camera that only serves single JPEGs (Snapmaker U1's monitor.jpg) still
 // makes a real moving picture if it is asked often enough. The server does
 // the asking — once per printer, for all viewers (camera/liveJpeg.js) — and
-// sends the frames as multipart/x-mixed-replace, which a plain <img> plays
-// by itself: no decoder, no MSE, works on a phone and behind Home Assistant's
-// ingress. Only for a printer whose Live view is switched on in Settings
-// (capabilities.cameraLive); every other snapshot camera keeps its still.
+// streams the frames as MJPEG (multipart), which this reads and shows frame
+// by frame in an ordinary <img>. No decoder, no MSE: it works on a phone and
+// on a plain-http LAN page. Only for a printer whose Live view is switched on
+// in Settings (capabilities.cameraLive); every other snapshot camera keeps
+// its still.
 //
-// Each live tile holds one HTTP connection, so — like the relayed stream —
-// only a few run at once and the rest simply stay on stills, and a tile that
-// scrolls out of view drops its connection (which is what stops the printer's
-// camera being polled for it).
-const CAM_LIVE = new Map();       // printer id, or "snap" for the modal -> <img>
+// Why the frames are parsed here instead of handing the multipart stream to
+// the <img>, which browsers play by themselves: Home Assistant's ingress
+// proxy rebuilds the Content-Type and drops its boundary parameter, leaving
+// the browser unable to split the stream — the sidebar panel showed nothing
+// at all. The boundary comes from X-SnapCon-Boundary (an ordinary header,
+// which ingress passes through untouched).
+//
+// Each live view holds one HTTP connection, so — like the relayed stream —
+// only a few tiles run at once and the rest simply stay on stills, and a tile
+// that scrolls out of view drops its connection (which is what stops the
+// printer's camera being polled for it).
+const CAM_LIVE = new Map();       // printer id, or "snap" for the modal -> entry
 const CAM_LIVE_MAX_TILES = 3;
+const CAM_LIVE_MAX_FRAME = 16 * 1024 * 1024; // a frame this big is a broken stream, not a picture
 let CAM_LIVE_OBSERVER = null;
 function camLiveEl(key,printerId){
   const img=document.createElement("img");
@@ -754,25 +763,101 @@ function camLiveEl(key,printerId){
   img.dataset.camlive=String(printerId); img.dataset.camlivekey=String(key);
   return img;
 }
-function camLiveTileCount(){ let n=0; for(const [k,img] of CAM_LIVE) if(k!=="snap"&&img.dataset.camlivestate==="on") n++; return n; }
-function camLiveStart(img){
-  if(img.dataset.camlivestate==="on") return;
-  img.dataset.camlivestate="on";
-  img.src="api/camera-live?printer="+img.dataset.camlive+"&t="+Date.now();
+function camLiveEntry(key,img,printerId,onFail){
+  return { key, img, printerId, state:"idle", abort:null, url:null, prevUrl:null, frames:0, onFail };
 }
-function camLiveStop(img){
-  if(img.dataset.camlivestate!=="on") return;
-  // Dropping the src is what closes the connection — the state flag is set
-  // first so the abort's own error event is not read as a dead camera.
-  img.dataset.camlivestate="off";
-  img.removeAttribute("src");
+function camLiveTileCount(){ let n=0; for(const [k,e] of CAM_LIVE) if(k!=="snap"&&e.state==="on") n++; return n; }
+function camLiveConcat(a,b){
+  if(!a.length) return b;
+  const out=new Uint8Array(a.length+b.length); out.set(a,0); out.set(b,a.length); return out;
+}
+function camLiveIndexOf(buf,needle,from){
+  outer: for(let i=from;i<=buf.length-needle.length;i++){
+    for(let j=0;j<needle.length;j++) if(buf[i+j]!==needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+// One MJPEG part out of the buffer: "--boundary CRLF headers CRLF CRLF bytes".
+// Returns null while the part is still incomplete.
+function camLiveNextFrame(buf,boundaryBytes,gapBytes){
+  const at=camLiveIndexOf(buf,boundaryBytes,0);
+  if(at<0) return null;
+  const headEnd=camLiveIndexOf(buf,gapBytes,at);
+  if(headEnd<0) return null;
+  const head=new TextDecoder().decode(buf.subarray(at,headEnd));
+  const m=/content-length:\s*(\d+)/i.exec(head);
+  if(!m) return null;
+  const len=parseInt(m[1],10);
+  const body=headEnd+gapBytes.length;
+  if(!Number.isFinite(len)||len<=0||len>CAM_LIVE_MAX_FRAME) throw new Error("bad frame length");
+  if(buf.length<body+len) return null;
+  return { bytes:buf.subarray(body,body+len), rest:buf.subarray(body+len) };
+}
+function camLiveShow(entry,bytes){
+  const url=URL.createObjectURL(new Blob([bytes],{type:"image/jpeg"}));
+  // The previous frame's URL is only released once the new one is on screen,
+  // so the tile never flashes empty between frames.
+  if(entry.prevUrl){ try{ URL.revokeObjectURL(entry.prevUrl); }catch{} }
+  entry.prevUrl=entry.url; entry.url=url; entry.frames++;
+  entry.img.src=url;
+}
+async function camLivePump(entry){
+  const r=await fetch("api/camera-live?printer="+entry.printerId,{signal:entry.abort.signal,cache:"no-store"});
+  if(!r.ok||!r.body){
+    let msg=t("fleet.camera.no_feed");
+    try{ const j=await r.json(); if(j&&j.error) msg=j.error; }catch{}
+    throw new Error(msg);
+  }
+  const boundary="--"+(r.headers.get("X-SnapCon-Boundary")||"snapconframe");
+  const enc=new TextEncoder();
+  const boundaryBytes=enc.encode(boundary), gapBytes=enc.encode("\r\n\r\n");
+  const reader=r.body.getReader();
+  let buf=new Uint8Array(0);
+  for(;;){
+    const {value,done}=await reader.read();
+    if(done) break;
+    buf=camLiveConcat(buf,value);
+    for(;;){
+      const frame=camLiveNextFrame(buf,boundaryBytes,gapBytes);
+      if(!frame) break;
+      buf=frame.rest;
+      camLiveShow(entry,frame.bytes);
+    }
+    if(buf.length>CAM_LIVE_MAX_FRAME) throw new Error("live stream out of sync");
+  }
+  // The server ends the stream when the camera gives up — never on its own.
+  throw new Error(t("fleet.camera.no_feed"));
+}
+function camLiveStart(entry){
+  if(entry.state==="on") return;
+  entry.state="on";
+  entry.abort=new AbortController();
+  camLivePump(entry).catch(err=>{
+    if(entry.state!=="on") return; // our own stop, not a failure
+    entry.state="idle";
+    if(entry.onFail) entry.onFail(err);
+  });
+}
+function camLiveStop(entry){
+  if(entry.state!=="on") return;
+  entry.state="idle";
+  // Aborting the fetch is what closes the connection; as soon as the last
+  // viewer does that, the server stops polling the printer's camera.
+  try{ entry.abort.abort(); }catch{}
+  entry.abort=null;
+}
+function camLiveRelease(entry){
+  for(const u of [entry.url,entry.prevUrl]) if(u){ try{ URL.revokeObjectURL(u); }catch{} }
+  entry.url=entry.prevUrl=null;
 }
 function closeCamLive(key){
-  const img=CAM_LIVE.get(key);
-  if(!img) return;
+  const entry=CAM_LIVE.get(key);
+  if(!entry) return;
   CAM_LIVE.delete(key);
-  if(CAM_LIVE_OBSERVER) CAM_LIVE_OBSERVER.unobserve(img);
-  camLiveStop(img);
+  if(CAM_LIVE_OBSERVER) CAM_LIVE_OBSERVER.unobserve(entry.img);
+  camLiveStop(entry);
+  camLiveRelease(entry);
 }
 function closeAllCamLive(includeModal){
   for(const key of [...CAM_LIVE.keys()]) if(includeModal||key!=="snap") closeCamLive(key);
@@ -780,41 +865,45 @@ function closeAllCamLive(includeModal){
 // Coming back to the tab: the modal's view is restarted directly, the tiles
 // through the observer, which re-decides what is actually on screen.
 function camLiveResume(){
-  for(const [key,img] of CAM_LIVE){
-    if(key==="snap"){ camLiveStart(img); continue; }
-    if(CAM_LIVE_OBSERVER){ CAM_LIVE_OBSERVER.unobserve(img); CAM_LIVE_OBSERVER.observe(img); }
+  for(const [key,entry] of CAM_LIVE){
+    if(key==="snap"){ camLiveStart(entry); continue; }
+    if(CAM_LIVE_OBSERVER){ CAM_LIVE_OBSERVER.unobserve(entry.img); CAM_LIVE_OBSERVER.observe(entry.img); }
   }
 }
 function camLiveObserver(){
   if(CAM_LIVE_OBSERVER) return CAM_LIVE_OBSERVER;
   CAM_LIVE_OBSERVER=new IntersectionObserver(entries=>{
     for(const e of entries){
-      const img=e.target;
+      const entry=CAM_LIVE.get(camLiveKeyOf(e.target));
+      if(!entry) continue;
       if(e.isIntersecting){
-        if(img.dataset.camlivestate!=="on"&&camLiveTileCount()>=CAM_LIVE_MAX_TILES) continue;
-        camLiveStart(img);
-      }else camLiveStop(img);
+        if(entry.state!=="on"&&camLiveTileCount()>=CAM_LIVE_MAX_TILES) continue;
+        camLiveStart(entry);
+      }else camLiveStop(entry);
     }
   },{root:null,rootMargin:"200px",threshold:0.01});
   return CAM_LIVE_OBSERVER;
+}
+function camLiveKeyOf(img){
+  const k=img.dataset.camlivekey;
+  return k==="snap"?"snap":parseInt(k,10);
 }
 // Same slot contract as mountCamShot/mountCamRtc/mountCamStream. A camera
 // that cannot be streamed (switched off, printer rebooting) falls back to the
 // ordinary snapshot tile rather than leaving a broken image behind.
 function mountCamLive(slot,id,refreshMs,stagger){
   const cached=CAM_LIVE.get(id);
-  if(cached){ slot.replaceWith(cached); return; }
+  if(cached){ slot.replaceWith(cached.img); return; }
   if(camLiveTileCount()>=CAM_LIVE_MAX_TILES){ mountCamShot(slot,id,refreshMs,stagger); return; }
   const img=camLiveEl(id,id);
-  img.onerror=()=>{
-    if(img.dataset.camlivestate!=="on") return; // our own stop, not a failure
+  const entry=camLiveEntry(id,img,id,()=>{
     closeCamLive(id);
     if(!img.isConnected) return;
     const next=document.createElement("div");
     img.replaceWith(next);
     mountCamShot(next,id,refreshMs,stagger);
-  };
-  CAM_LIVE.set(id,img);
+  });
+  CAM_LIVE.set(id,entry);
   slot.replaceWith(img);
   camLiveObserver().observe(img);
 }
@@ -7265,16 +7354,16 @@ async function loadSnapshot(){
     const forPrinter=SNAP_PRINTER;
     const img=camLiveEl("snap",forPrinter);
     img.style.cssText='max-width:100%;max-height:65vh;border-radius:8px;display:block;margin:0 auto;background:#1b1e24;min-width:240px;min-height:135px';
-    img.onerror=()=>{
-      if(img.dataset.camlivestate!=="on"||SNAP_PRINTER!==forPrinter) return;
+    const entry=camLiveEntry("snap",img,forPrinter,(err)=>{
       closeCamLive("snap");
-      wrap.innerHTML='<span style="color:var(--ink-dim)">'+esc(t("fleet.camera.no_feed"))+'</span>';
+      if(SNAP_PRINTER!==forPrinter||!img.isConnected) return;
+      wrap.innerHTML='<span style="color:var(--ink-dim)">'+esc(err&&err.message||t("fleet.camera.no_feed"))+'</span>';
       $("snapts").textContent='';
-    };
+    });
     wrap.innerHTML=''; wrap.appendChild(img);
     $("snapts").textContent=t("fleet.camera.live");
-    CAM_LIVE.set("snap",img);
-    camLiveStart(img);
+    CAM_LIVE.set("snap",entry);
+    camLiveStart(entry);
     return;
   }
   // A WebRTC-only camera has no /api/snapshot to call — the frame can only
