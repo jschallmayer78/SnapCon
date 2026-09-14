@@ -63,5 +63,7 @@ survives updates and is part of Home Assistant backups. G-code files on
 - **Restart App** in SnapCon's Settings stops the process; turn on the
   add-on's **Watchdog** switch so the Supervisor starts it again.
 - Updating: when installed from GitHub, the image contains SnapCon as it was
-  on `main` when it was built. A new add-on version (e.g. `0.7.0.1`) shows up
-  as an update; **Rebuild** in the add-on picks up newer commits in between.
+  on the repository's default branch when it was built. A new add-on version
+  (e.g. `0.7.0.2`) shows up as an update; **Rebuild** in the add-on picks up
+  newer commits in between. To pin the add-on to one branch or tag, set
+  `SNAPCON_REF` in the add-on's Dockerfile.
